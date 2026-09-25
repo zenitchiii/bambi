@@ -7,6 +7,7 @@ import {
 } from "@/constants/date";
 import {
   daysUntil,
+  formatDateISO,
   getMonthsAndDays,
   getMonthsaryOccurrences,
   getNextOccurrence,
@@ -14,6 +15,7 @@ import {
   getYearlyOccurrencesFromMonthDay,
 } from "@/utils/dateMath";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Image } from "expo-image";
 import { useFocusEffect } from "expo-router";
 import { CalendarHeart, Heart } from "lucide-react-native";
 import { useCallback, useState } from "react";
@@ -21,20 +23,32 @@ import { StyleSheet, Text, View } from "react-native";
 
 const DATE_NIGHT_STORAGE_KEY = "nextDateNight";
 const CUSTOM_EVENTS_STORAGE_KEY = "customEvents";
+const MEMORIES_KEY = "memories";
 const UPCOMING_WINDOW_DAYS = 30;
 const [START_YEAR] = APP_START_DATE.split("-").map(Number);
 
 export default function HomeScreen() {
   const [dateNight, setDateNight] = useState<string | null>(null);
   const [customEvents, setCustomEvents] = useState<Record<string, string>>({});
+  const [onThisDay, setOnThisDay] = useState<{ uri: string; date: string }[]>(
+    [],
+  );
 
   useFocusEffect(
     useCallback(() => {
-      AsyncStorage.getItem(DATE_NIGHT_STORAGE_KEY).then((saved) => {
-        setDateNight(saved ?? null);
-      });
-      AsyncStorage.getItem(CUSTOM_EVENTS_STORAGE_KEY).then((saved) => {
-        setCustomEvents(saved ? JSON.parse(saved) : {});
+      AsyncStorage.getItem(MEMORIES_KEY).then((saved) => {
+        if (!saved) return setOnThisDay([]);
+        const all = JSON.parse(saved);
+        const [, todayM, todayD] = formatDateISO(new Date()).split("-");
+        const matches = all.filter((m: any) => {
+          const [y, mo, d] = m.date.split("-");
+          return (
+            mo === todayM &&
+            d === todayD &&
+            y !== new Date().getFullYear().toString()
+          );
+        });
+        setOnThisDay(matches);
       });
     }, []),
   );
@@ -95,6 +109,18 @@ export default function HomeScreen() {
           {days === 1 ? "" : "s"}
         </Text>
       </View>
+
+      {onThisDay.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>On this day</Text>
+          <Image
+            source={{ uri: onThisDay[0].uri }}
+            style={{ width: "100%", height: 160, borderRadius: 12 }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
+        </View>
+      )}
 
       <View style={styles.card}>
         <Heart color="#e75480" size={28} />

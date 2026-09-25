@@ -3,50 +3,58 @@ import { formatDateISO } from "@/utils/dateMath";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Slider from "@react-native-community/slider";
 import { useEvent } from "expo";
+import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { VideoView, useVideoPlayer } from "expo-video";
 import {
   Check,
   ChevronLeft,
+  Heart,
   Pause,
   Play,
   Plus,
   RotateCcw,
-  X,
+  Star,
+  Trash2,
+  X
 } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Dimensions,
-  Image,
+  FlatList,
   Modal,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 
-const MEMORIES_STORAGE_KEY = "memories";
+const MEMORIES_KEY = "memories";
+const COVERS_KEY = "albumCovers";
 const SCREEN_WIDTH = Dimensions.get("window").width;
+const SCREEN_HEIGHT = Dimensions.get("window").height;
 const GRID_GAP = 4;
 const COLUMNS = 3;
 const ITEM_SIZE = (SCREEN_WIDTH - 40 - GRID_GAP * (COLUMNS - 1)) / COLUMNS;
-const FOLDER_COLUMNS = 2;
 const FOLDER_GAP = 14;
-const FOLDER_SIZE =
-  (SCREEN_WIDTH - 40 - FOLDER_GAP * (FOLDER_COLUMNS - 1)) / FOLDER_COLUMNS;
+const FOLDER_SIZE = (SCREEN_WIDTH - 40 - FOLDER_GAP) / 2;
+const FAVORITES_ALBUM = "__favorites__";
+const TODAY = formatDateISO(new Date());
 
 type Memory = {
   id: string;
   uri: string;
   type: "image" | "video";
   date: string;
+  caption?: string;
+  favorite?: boolean;
 };
 
 function formatAlbumDate(dateISO: string): string {
-  const today = formatDateISO(new Date());
-  if (dateISO === today) return "Today";
+  if (dateISO === TODAY) return "Today";
   const [y, m, d] = dateISO.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("en-US", {
     month: "long",
@@ -62,12 +70,11 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function VideoViewer({ uri }: { uri: string }) {
+function VideoPage({ uri }: { uri: string }) {
   const player = useVideoPlayer(uri, (p) => {
     p.timeUpdateEventInterval = 0.5;
     p.play();
   });
-
   const { isPlaying } = useEvent(player, "playingChange", {
     isPlaying: player.playing,
   });
@@ -77,35 +84,24 @@ function VideoViewer({ uri }: { uri: string }) {
     currentOffsetFromLive: null,
     bufferedPosition: 0,
   });
-
   const duration = player.duration || 0;
-
-  const togglePlay = () => {
-    if (isPlaying) player.pause();
-    else player.play();
-  };
-
-  const restart = () => {
-    player.currentTime = 0;
-  };
+  const toggle = () => (isPlaying ? player.pause() : player.play());
 
   return (
-    <View style={styles.videoWrapper}>
+    <View style={styles.page}>
       <VideoView
-        style={styles.viewerMedia}
+        style={styles.pageMedia}
         player={player}
         nativeControls={false}
         contentFit="contain"
       />
-
-      <Pressable style={StyleSheet.absoluteFill} onPress={togglePlay}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={toggle}>
         {!isPlaying && (
           <View style={styles.centerPlayButton}>
             <Play color="#fff" size={36} fill="#fff" />
           </View>
         )}
       </Pressable>
-
       <View style={styles.videoControls}>
         <Slider
           style={styles.videoSlider}
@@ -115,20 +111,24 @@ function VideoViewer({ uri }: { uri: string }) {
           minimumTrackTintColor="#e75480"
           maximumTrackTintColor="rgba(255,255,255,0.3)"
           thumbTintColor="#e75480"
-          onSlidingComplete={(value) => {
-            player.currentTime = value;
+          onSlidingComplete={(v) => {
+            player.currentTime = v;
           }}
         />
         <View style={styles.videoControlsRow}>
           <View style={styles.videoControlsLeft}>
-            <Pressable onPress={togglePlay}>
+            <Pressable onPress={toggle}>
               {isPlaying ? (
                 <Pause color="#fff" size={22} fill="#fff" />
               ) : (
                 <Play color="#fff" size={22} fill="#fff" />
               )}
             </Pressable>
-            <Pressable onPress={restart}>
+            <Pressable
+              onPress={() => {
+                player.currentTime = 0;
+              }}
+            >
               <RotateCcw color="#fff" size={20} />
             </Pressable>
           </View>
@@ -143,11 +143,17 @@ function VideoViewer({ uri }: { uri: string }) {
 
 export default function MemoriesScreen() {
   const params = useLocalSearchParams<{ date?: string }>();
-  const today = formatDateISO(new Date());
 
   const [memories, setMemories] = useState<Memory[]>([]);
-  const [viewerItem, setViewerItem] = useState<Memory | null>(null);
+  const [covers, setCovers] = useState<Record<string, string>>({});
   const [openAlbum, setOpenAlbum] = useState<string | null>(null);
+  const [yearFilter, setYearFilter] = useState<string | null>(null);
+  const [filterVisible, setFilterVisible] = useState(false);
+
+  const [viewerList, setViewerList] = useState<Memory[] | null>(null);
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const [captionDraft, setCaptionDraft] = useState("");
+  const [editingCaption, setEditingCaption] = useState(false);
 
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -159,17 +165,21 @@ export default function MemoriesScreen() {
   );
 
   useEffect(() => {
-    AsyncStorage.getItem(MEMORIES_STORAGE_KEY).then((saved) => {
+    AsyncStorage.getItem(MEMORIES_KEY).then((saved) => {
       if (!saved) return;
       const parsed: any[] = JSON.parse(saved);
-      const migrated: Memory[] = parsed.map((m) => ({
-        ...m,
-        date:
-          m.date ??
-          formatDateISO(new Date(Number(m.id?.split("-")[0]) || Date.now())),
-      }));
-      setMemories(migrated);
+      setMemories(
+        parsed.map((m) => ({
+          ...m,
+          date:
+            m.date ??
+            formatDateISO(new Date(Number(m.id?.split("-")[0]) || Date.now())),
+        })),
+      );
     });
+    AsyncStorage.getItem(COVERS_KEY).then(
+      (saved) => saved && setCovers(JSON.parse(saved)),
+    );
   }, []);
 
   useEffect(() => {
@@ -178,10 +188,15 @@ export default function MemoriesScreen() {
 
   const saveMemories = async (updated: Memory[]) => {
     setMemories(updated);
-    await AsyncStorage.setItem(MEMORIES_STORAGE_KEY, JSON.stringify(updated));
+    await AsyncStorage.setItem(MEMORIES_KEY, JSON.stringify(updated));
+  };
+  const saveCovers = async (updated: Record<string, string>) => {
+    setCovers(updated);
+    await AsyncStorage.setItem(COVERS_KEY, JSON.stringify(updated));
   };
 
-  const isFutureAlbum = openAlbum !== null && openAlbum > today;
+  const isFutureAlbum =
+    !!openAlbum && openAlbum !== FAVORITES_ALBUM && openAlbum > TODAY;
 
   const handleAddMemory = async () => {
     if (isFutureAlbum) {
@@ -191,75 +206,128 @@ export default function MemoriesScreen() {
       );
       return;
     }
-
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return;
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images", "videos"],
       allowsMultipleSelection: true,
       quality: 0.8,
     });
-
     if (result.canceled) return;
 
-    const targetDate = openAlbum ?? today;
-    const newMemories: Memory[] = result.assets.map((asset) => ({
-      id: `${Date.now()}-${asset.assetId ?? Math.random()}`,
-      uri: asset.uri,
-      type: asset.type === "video" ? "video" : "image",
+    const targetDate =
+      openAlbum && openAlbum !== FAVORITES_ALBUM ? openAlbum : TODAY;
+    const newOnes: Memory[] = result.assets.map((a) => ({
+      id: `${Date.now()}-${a.assetId ?? Math.random()}`,
+      uri: a.uri,
+      type: a.type === "video" ? "video" : "image",
       date: targetDate,
     }));
-
-    await saveMemories([...newMemories, ...memories]);
+    await saveMemories([...newOnes, ...memories]);
     if (!openAlbum) setOpenAlbum(targetDate);
   };
 
-  const sections = (() => {
+  const sections = useMemo(() => {
     const map: Record<string, Memory[]> = {};
     memories.forEach((m) => {
-      if (!map[m.date]) map[m.date] = [];
-      map[m.date].push(m);
+      (map[m.date] ??= []).push(m);
     });
     return Object.entries(map)
       .sort(([a], [b]) => (a < b ? 1 : -1))
       .map(([date, items]) => ({ date, items }));
-  })();
+  }, [memories]);
 
-  const currentAlbumItems = openAlbum
-    ? (sections.find((s) => s.date === openAlbum)?.items ?? [])
-    : [];
+  const availableYears = useMemo(
+    () =>
+      Array.from(new Set(sections.map((s) => s.date.slice(0, 4))))
+        .sort()
+        .reverse(),
+    [sections],
+  );
 
-  // ---------- Item selection (inside an album) ----------
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  const visibleSections = yearFilter
+    ? sections.filter((s) => s.date.startsWith(yearFilter))
+    : sections;
+  const favorites = useMemo(
+    () => memories.filter((m) => m.favorite),
+    [memories],
+  );
+
+  const currentAlbumItems =
+    openAlbum === FAVORITES_ALBUM
+      ? favorites
+      : openAlbum
+        ? (sections.find((s) => s.date === openAlbum)?.items ?? [])
+        : [];
+
+  // ---------- viewer (swipeable) ----------
+  const openViewer = (list: Memory[], index: number) => {
+    setViewerList(list);
+    setViewerIndex(index);
+  };
+  const closeViewer = () => {
+    setViewerList(null);
+    setEditingCaption(false);
+  };
+
+  const currentViewerItem = viewerList?.[viewerIndex] ?? null;
+
+  const updateMemory = (id: string, patch: Partial<Memory>) => {
+    const updated = memories.map((m) => (m.id === id ? { ...m, ...patch } : m));
+    saveMemories(updated);
+  };
+
+  const toggleFavorite = (item: Memory) =>
+    updateMemory(item.id, { favorite: !item.favorite });
+
+  const saveCaption = () => {
+    if (!currentViewerItem) return;
+    updateMemory(currentViewerItem.id, { caption: captionDraft });
+    setEditingCaption(false);
+  };
+
+  const removeFromViewer = (item: Memory) => {
+    Alert.alert("Remove this memory?", "This can't be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          await saveMemories(memories.filter((m) => m.id !== item.id));
+          closeViewer();
+        },
+      },
+    ]);
+  };
+
+  const setAsCover = (item: Memory) => {
+    if (!openAlbum || openAlbum === FAVORITES_ALBUM) return;
+    saveCovers({ ...covers, [openAlbum]: item.id });
+  };
+
+  // ---------- item selection (inside an album) ----------
+  const toggleSelect = (id: string) =>
+    setSelectedIds((p) => {
+      const n = new Set(p);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
     });
-  };
-
-  const handleItemPress = (item: Memory) => {
-    if (selectionMode) toggleSelect(item.id);
-    else setViewerItem(item);
-  };
-
+  const handleItemPress = (item: Memory, index: number) =>
+    selectionMode
+      ? toggleSelect(item.id)
+      : openViewer(currentAlbumItems, index);
   const handleItemLongPress = (item: Memory) => {
     if (!selectionMode) {
       setSelectionMode(true);
       setSelectedIds(new Set([item.id]));
     }
   };
-
   const exitSelectionMode = () => {
     setSelectionMode(false);
     setSelectedIds(new Set());
   };
-
-  const selectAll = () => {
+  const selectAll = () =>
     setSelectedIds(new Set(currentAlbumItems.map((m) => m.id)));
-  };
 
   const handleRemoveSelected = () => {
     Alert.alert(
@@ -278,12 +346,12 @@ export default function MemoriesScreen() {
       ],
     );
   };
-
   const handleMoveSelected = async (targetDate: string) => {
-    const updated = memories.map((m) =>
-      selectedIds.has(m.id) ? { ...m, date: targetDate } : m,
+    await saveMemories(
+      memories.map((m) =>
+        selectedIds.has(m.id) ? { ...m, date: targetDate } : m,
+      ),
     );
-    await saveMemories(updated);
     setMoveModalVisible(false);
     exitSelectionMode();
   };
@@ -293,45 +361,35 @@ export default function MemoriesScreen() {
     setOpenAlbum(null);
   };
 
-  // ---------- Folder selection (top-level grid) ----------
-  const toggleFolderSelect = (date: string) => {
-    setSelectedFolders((prev) => {
-      const next = new Set(prev);
-      if (next.has(date)) next.delete(date);
-      else next.add(date);
-      return next;
+  // ---------- folder selection (top-level grid) ----------
+  const toggleFolderSelect = (date: string) =>
+    setSelectedFolders((p) => {
+      const n = new Set(p);
+      n.has(date) ? n.delete(date) : n.add(date);
+      return n;
     });
-  };
-
-  const handleFolderPress = (date: string) => {
-    if (folderSelectionMode) toggleFolderSelect(date);
-    else setOpenAlbum(date);
-  };
-
+  const handleFolderPress = (date: string) =>
+    folderSelectionMode ? toggleFolderSelect(date) : setOpenAlbum(date);
   const handleFolderLongPress = (date: string) => {
     if (!folderSelectionMode) {
       setFolderSelectionMode(true);
       setSelectedFolders(new Set([date]));
     }
   };
-
   const exitFolderSelectionMode = () => {
     setFolderSelectionMode(false);
     setSelectedFolders(new Set());
   };
-
-  const selectAllFolders = () => {
-    setSelectedFolders(new Set(sections.map((s) => s.date)));
-  };
+  const selectAllFolders = () =>
+    setSelectedFolders(new Set(visibleSections.map((s) => s.date)));
 
   const handleRemoveFolders = () => {
-    const itemCount = sections
+    const count = sections
       .filter((s) => selectedFolders.has(s.date))
       .reduce((sum, s) => sum + s.items.length, 0);
-
     Alert.alert(
       `Delete ${selectedFolders.size} album${selectedFolders.size === 1 ? "" : "s"}?`,
-      `This will remove ${itemCount} item${itemCount === 1 ? "" : "s"} inside. This can't be undone.`,
+      `Removes ${count} item${count === 1 ? "" : "s"} inside. Can't be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -348,7 +406,13 @@ export default function MemoriesScreen() {
     );
   };
 
-  // ---------- Folder list (top level) ----------
+  const goToCalendarDate = (date: string) =>
+    router.push({ pathname: "/calendar", params: { date } });
+
+  const folderCoverUri = (date: string, items: Memory[]) =>
+    items.find((i) => i.id === covers[date])?.uri ?? items[0].uri;
+
+  // ---------- Folder list ----------
   if (!openAlbum) {
     return (
       <ScreenContainer contentContainerStyle={{ gap: 16 }}>
@@ -367,9 +431,16 @@ export default function MemoriesScreen() {
         ) : (
           <View style={styles.headerRow}>
             <Text style={styles.title}>Memories</Text>
-            <Pressable style={styles.addButton} onPress={handleAddMemory}>
-              <Plus color="#fff" size={20} />
-            </Pressable>
+            <View style={styles.headerButtons}>
+              <Pressable onPress={() => setFilterVisible(true)}>
+                <Text style={styles.headerLink}>
+                  {yearFilter ?? "All years"}
+                </Text>
+              </Pressable>
+              <Pressable style={styles.addButton} onPress={handleAddMemory}>
+                <Plus color="#fff" size={20} />
+              </Pressable>
+            </View>
           </View>
         )}
 
@@ -401,7 +472,27 @@ export default function MemoriesScreen() {
           </View>
         ) : (
           <View style={styles.folderGrid}>
-            {sections.map((section) => {
+            {favorites.length > 0 && !folderSelectionMode && (
+              <Pressable
+                style={styles.folderTile}
+                onPress={() => setOpenAlbum(FAVORITES_ALBUM)}
+              >
+                <Image
+                  source={{ uri: favorites[0].uri }}
+                  style={styles.folderCover}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                />
+                <View style={styles.favoriteBadge}>
+                  <Heart color="#fff" size={12} fill="#fff" />
+                </View>
+                <Text style={styles.folderLabel}>Favorites</Text>
+                <Text style={styles.folderCount}>
+                  {favorites.length} item{favorites.length === 1 ? "" : "s"}
+                </Text>
+              </Pressable>
+            )}
+            {visibleSections.map((section) => {
               const isSelected = selectedFolders.has(section.date);
               return (
                 <Pressable
@@ -412,8 +503,12 @@ export default function MemoriesScreen() {
                 >
                   <View>
                     <Image
-                      source={{ uri: section.items[0].uri }}
+                      source={{
+                        uri: folderCoverUri(section.date, section.items),
+                      }}
                       style={styles.folderCover}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
                     />
                     {folderSelectionMode && (
                       <View
@@ -446,15 +541,75 @@ export default function MemoriesScreen() {
           </View>
         )}
 
-        <MediaViewerModal
-          viewerItem={viewerItem}
-          onClose={() => setViewerItem(null)}
+        <MediaViewer
+          list={viewerList}
+          index={viewerIndex}
+          onIndexChange={setViewerIndex}
+          onClose={closeViewer}
+          onToggleFavorite={toggleFavorite}
+          onRemove={removeFromViewer}
+          captionDraft={captionDraft}
+          setCaptionDraft={setCaptionDraft}
+          editingCaption={editingCaption}
+          setEditingCaption={setEditingCaption}
+          onSaveCaption={saveCaption}
+          canSetCover={false}
+          onSetCover={() => {}}
         />
+
+        <Modal
+          visible={filterVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setFilterVisible(false)}
+        >
+          <Pressable
+            style={styles.overlay}
+            onPress={() => setFilterVisible(false)}
+          >
+            <Pressable
+              style={styles.sheet}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <Text style={styles.sheetTitle}>Filter by year</Text>
+              <Pressable
+                style={styles.albumOption}
+                onPress={() => {
+                  setYearFilter(null);
+                  setFilterVisible(false);
+                }}
+              >
+                <Text style={styles.albumOptionText}>All years</Text>
+              </Pressable>
+              {availableYears.map((y) => (
+                <Pressable
+                  key={y}
+                  style={styles.albumOption}
+                  onPress={() => {
+                    setYearFilter(y);
+                    setFilterVisible(false);
+                  }}
+                >
+                  <Text style={styles.albumOptionText}>{y}</Text>
+                </Pressable>
+              ))}
+              <Pressable
+                style={styles.cancelButton}
+                onPress={() => setFilterVisible(false)}
+              >
+                <Text style={styles.cancelText}>Close</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </ScreenContainer>
     );
   }
 
   // ---------- Inside an album ----------
+  const albumTitle =
+    openAlbum === FAVORITES_ALBUM ? "Favorites" : formatAlbumDate(openAlbum);
+
   return (
     <ScreenContainer contentContainerStyle={{ gap: 16 }}>
       {selectionMode ? (
@@ -473,17 +628,26 @@ export default function MemoriesScreen() {
         <View style={styles.headerRow}>
           <Pressable style={styles.backRow} onPress={closeAlbum}>
             <ChevronLeft color="#e75480" size={22} />
-            <Text style={styles.title}>{formatAlbumDate(openAlbum)}</Text>
+            <Text style={styles.title}>{albumTitle}</Text>
           </Pressable>
-          <Pressable
-            style={[
-              styles.addButton,
-              isFutureAlbum && styles.addButtonDisabled,
-            ]}
-            onPress={handleAddMemory}
-          >
-            <Plus color="#fff" size={20} />
-          </Pressable>
+          <View style={styles.headerButtons}>
+            {openAlbum !== FAVORITES_ALBUM && (
+              <Pressable onPress={() => goToCalendarDate(openAlbum)}>
+                <Text style={styles.headerLink}>View in Calendar</Text>
+              </Pressable>
+            )}
+            {openAlbum !== FAVORITES_ALBUM && (
+              <Pressable
+                style={[
+                  styles.addButton,
+                  isFutureAlbum && styles.addButtonDisabled,
+                ]}
+                onPress={handleAddMemory}
+              >
+                <Plus color="#fff" size={20} />
+              </Pressable>
+            )}
+          </View>
         </View>
       )}
 
@@ -523,17 +687,34 @@ export default function MemoriesScreen() {
         </View>
       )}
 
-      <View style={styles.grid}>
-        {currentAlbumItems.map((item) => {
+      <FlatList
+        data={currentAlbumItems}
+        numColumns={COLUMNS}
+        columnWrapperStyle={{ gap: GRID_GAP }}
+        contentContainerStyle={{ gap: GRID_GAP }}
+        keyExtractor={(item) => item.id}
+        scrollEnabled={false}
+        removeClippedSubviews
+        initialNumToRender={12}
+        renderItem={({ item, index }) => {
           const isSelected = selectedIds.has(item.id);
           return (
             <Pressable
-              key={item.id}
-              onPress={() => handleItemPress(item)}
+              onPress={() => handleItemPress(item, index)}
               onLongPress={() => handleItemLongPress(item)}
             >
               <View style={styles.thumbnailWrapper}>
-                <Image source={{ uri: item.uri }} style={styles.thumbnail} />
+                <Image
+                  source={{ uri: item.uri }}
+                  style={styles.thumbnail}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                />
+                {item.favorite && !selectionMode && (
+                  <View style={styles.favoriteCorner}>
+                    <Heart color="#fff" size={12} fill="#fff" />
+                  </View>
+                )}
                 {item.type === "video" && !selectionMode && (
                   <View style={styles.playOverlay}>
                     <Play color="#fff" size={20} fill="#fff" />
@@ -559,12 +740,23 @@ export default function MemoriesScreen() {
               </View>
             </Pressable>
           );
-        })}
-      </View>
+        }}
+      />
 
-      <MediaViewerModal
-        viewerItem={viewerItem}
-        onClose={() => setViewerItem(null)}
+      <MediaViewer
+        list={viewerList}
+        index={viewerIndex}
+        onIndexChange={setViewerIndex}
+        onClose={closeViewer}
+        onToggleFavorite={toggleFavorite}
+        onRemove={removeFromViewer}
+        captionDraft={captionDraft}
+        setCaptionDraft={setCaptionDraft}
+        editingCaption={editingCaption}
+        setEditingCaption={setEditingCaption}
+        onSaveCaption={saveCaption}
+        canSetCover={openAlbum !== FAVORITES_ALBUM}
+        onSetCover={setAsCover}
       />
 
       <Modal
@@ -605,34 +797,148 @@ export default function MemoriesScreen() {
   );
 }
 
-function MediaViewerModal({
-  viewerItem,
+function MediaViewer({
+  list,
+  index,
+  onIndexChange,
   onClose,
+  onToggleFavorite,
+  onRemove,
+  captionDraft,
+  setCaptionDraft,
+  editingCaption,
+  setEditingCaption,
+  onSaveCaption,
+  canSetCover,
+  onSetCover,
 }: {
-  viewerItem: Memory | null;
+  list: Memory[] | null;
+  index: number;
+  onIndexChange: (i: number) => void;
   onClose: () => void;
+  onToggleFavorite: (item: Memory) => void;
+  onRemove: (item: Memory) => void;
+  captionDraft: string;
+  setCaptionDraft: (v: string) => void;
+  editingCaption: boolean;
+  setEditingCaption: (v: boolean) => void;
+  onSaveCaption: () => void;
+  canSetCover: boolean;
+  onSetCover: (item: Memory) => void;
 }) {
+  const current = list?.[index] ?? null;
+
+  useEffect(() => {
+    if (current) setCaptionDraft(current.caption ?? "");
+  }, [current?.id]);
+
+  if (!list) return null;
+
   return (
     <Modal
-      visible={!!viewerItem}
+      visible={!!list}
       transparent
       animationType="fade"
       onRequestClose={onClose}
     >
       <View style={styles.viewerOverlay}>
+        <FlatList
+          data={list}
+          horizontal
+          pagingEnabled
+          initialScrollIndex={index}
+          getItemLayout={(_, i) => ({
+            length: SCREEN_WIDTH,
+            offset: SCREEN_WIDTH * i,
+            index: i,
+          })}
+          keyExtractor={(item) => item.id}
+          onMomentumScrollEnd={(e) =>
+            onIndexChange(
+              Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH),
+            )
+          }
+          renderItem={({ item }) =>
+            item.type === "image" ? (
+              <View style={styles.page}>
+                <Image
+                  source={{ uri: item.uri }}
+                  style={styles.pageMedia}
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                />
+              </View>
+            ) : (
+              <VideoPage uri={item.uri} />
+            )
+          }
+        />
+
         <Pressable style={styles.viewerClose} onPress={onClose}>
           <X color="#fff" size={28} />
         </Pressable>
 
-        {viewerItem?.type === "image" ? (
-          <Image
-            source={{ uri: viewerItem.uri }}
-            style={styles.viewerMedia}
-            resizeMode="contain"
-          />
-        ) : viewerItem ? (
-          <VideoViewer key={viewerItem.id} uri={viewerItem.uri} />
-        ) : null}
+        {current && (
+          <View style={styles.viewerTopRight}>
+            <Pressable
+              onPress={() => onToggleFavorite(current)}
+              style={styles.iconButton}
+            >
+              <Heart
+                color="#fff"
+                size={20}
+                fill={current.favorite ? "#e75480" : "transparent"}
+              />
+            </Pressable>
+            {canSetCover && (
+              <Pressable
+                onPress={() => onSetCover(current)}
+                style={styles.iconButton}
+              >
+                <Star color="#fff" size={20} />
+              </Pressable>
+            )}
+            <Pressable
+              onPress={() => onRemove(current)}
+              style={styles.iconButton}
+            >
+              <Trash2 color="#fff" size={20} />
+            </Pressable>
+          </View>
+        )}
+
+        {current && (
+          <View style={styles.captionBar}>
+            {editingCaption ? (
+              <View style={styles.captionEditRow}>
+                <TextInput
+                  style={styles.captionInput}
+                  value={captionDraft}
+                  onChangeText={setCaptionDraft}
+                  placeholder="Add a caption..."
+                  placeholderTextColor="#999"
+                  maxLength={80}
+                  autoFocus
+                />
+                <Pressable onPress={onSaveCaption}>
+                  <Text style={styles.captionSave}>Save</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable onPress={() => setEditingCaption(true)}>
+                <Text
+                  style={
+                    current.caption
+                      ? styles.captionText
+                      : styles.captionPlaceholder
+                  }
+                >
+                  {current.caption || "Add a caption..."}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        )}
       </View>
     </Modal>
   );
@@ -646,6 +952,7 @@ const styles = StyleSheet.create({
   },
   backRow: { flexDirection: "row", alignItems: "center", gap: 2 },
   title: { fontSize: 22, fontWeight: "700" },
+  headerButtons: { flexDirection: "row", alignItems: "center", gap: 14 },
   addButton: {
     backgroundColor: "#e75480",
     borderRadius: 20,
@@ -656,7 +963,7 @@ const styles = StyleSheet.create({
   },
   addButtonDisabled: { backgroundColor: "#e7a8ba" },
   selectionActions: { flexDirection: "row", gap: 16 },
-  headerLink: { color: "#e75480", fontWeight: "600", fontSize: 14 },
+  headerLink: { color: "#e75480", fontWeight: "600", fontSize: 13 },
   headerLinkMuted: { color: "#999", fontWeight: "600", fontSize: 14 },
   selectionBar: { flexDirection: "row", gap: 12 },
   selectionBarButton: {
@@ -676,9 +983,16 @@ const styles = StyleSheet.create({
   folderGrid: { flexDirection: "row", flexWrap: "wrap", gap: FOLDER_GAP },
   folderTile: { width: FOLDER_SIZE, gap: 4 },
   folderCover: { width: FOLDER_SIZE, height: FOLDER_SIZE, borderRadius: 12 },
+  favoriteBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    borderRadius: 10,
+    padding: 4,
+  },
   folderLabel: { fontSize: 14, fontWeight: "700", marginTop: 4 },
   folderCount: { fontSize: 12, color: "#999" },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: GRID_GAP },
   thumbnailWrapper: {
     width: ITEM_SIZE,
     height: ITEM_SIZE,
@@ -686,6 +1000,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   thumbnail: { width: "100%", height: "100%" },
+  favoriteCorner: { position: "absolute", top: 4, right: 4 },
   playOverlay: {
     position: "absolute",
     top: 0,
@@ -702,7 +1017,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    borderRadius: 12,
+    borderRadius: 8,
     backgroundColor: "rgba(0,0,0,0.1)",
     padding: 6,
     alignItems: "flex-end",
@@ -718,15 +1033,48 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   checkCircleActive: { backgroundColor: "#e75480", borderColor: "#e75480" },
-  viewerOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.9)",
+  viewerOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)" },
+  page: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    justifyContent: "center",
+  },
+  pageMedia: { width: SCREEN_WIDTH, height: "70%" },
+  viewerClose: { position: "absolute", top: 60, left: 20, zIndex: 1 },
+  viewerTopRight: {
+    position: "absolute",
+    top: 60,
+    right: 20,
+    flexDirection: "row",
+    gap: 10,
+    zIndex: 1,
+  },
+  iconButton: {
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 18,
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
   },
-  viewerMedia: { width: SCREEN_WIDTH, height: "70%" },
-  viewerClose: { position: "absolute", top: 60, right: 20, zIndex: 1 },
-  videoWrapper: { width: "100%", height: "100%", justifyContent: "center" },
+  captionBar: { position: "absolute", bottom: 110, left: 20, right: 20 },
+  captionText: { color: "#fff", fontSize: 14, textAlign: "center" },
+  captionPlaceholder: {
+    color: "rgba(255,255,255,0.4)",
+    fontSize: 14,
+    textAlign: "center",
+    fontStyle: "italic",
+  },
+  captionEditRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    borderRadius: 10,
+    padding: 8,
+  },
+  captionInput: { flex: 1, color: "#fff", fontSize: 14 },
+  captionSave: { color: "#e75480", fontWeight: "700" },
   centerPlayButton: {
     position: "absolute",
     top: 0,
