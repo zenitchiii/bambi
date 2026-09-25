@@ -17,6 +17,7 @@ import Holidays from "date-holidays";
 import { router } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Dimensions,
   Modal,
   Pressable,
@@ -29,28 +30,109 @@ import {
 import { CalendarList, DateData } from "react-native-calendars";
 
 const hd = new Holidays("PH");
-const DATE_NIGHT_STORAGE_KEY = "nextDateNight";
-const NOTES_STORAGE_KEY = "dateNotes";
-const CUSTOM_EVENTS_STORAGE_KEY = "customEvents";
+const DATE_NIGHT_KEY = "nextDateNight";
+const NOTES_KEY = "dateNotes";
+const EVENTS_KEY = "customEvents";
 const SCREEN_WIDTH = Dimensions.get("window").width;
-
-const [START_YEAR, START_MONTH] = APP_START_DATE.split("-").map(Number); // START_MONTH is 1-indexed
+const [START_YEAR, START_MONTH] = APP_START_DATE.split("-").map(Number);
+const TODAY = formatDateISO(new Date());
 
 function getOrdinal(n: number): string {
-  const suffixes = ["th", "st", "nd", "rd"];
-  const remainder = n % 100;
-  return (
-    n + (suffixes[(remainder - 20) % 10] || suffixes[remainder] || suffixes[0])
-  );
+  const s = ["th", "st", "nd", "rd"];
+  const r = n % 100;
+  return n + (s[(r - 20) % 10] || s[r] || s[0]);
 }
 
 type ModalMode = "options" | "note" | "event";
+
+// Shared display for "note" and "custom event" — same shape, different data
+function EditableEntry({
+  label,
+  content,
+  onEdit,
+  onRemove,
+  onAdd,
+  addLabel,
+}: {
+  label: string;
+  content?: string;
+  onEdit: () => void;
+  onRemove: () => void;
+  onAdd: () => void;
+  addLabel: string;
+}) {
+  if (!content) {
+    return (
+      <Pressable style={styles.optionButton} onPress={onAdd}>
+        <Text style={styles.optionText}>{addLabel}</Text>
+      </Pressable>
+    );
+  }
+  return (
+    <View style={styles.statusCard}>
+      <Text style={styles.noteLabel}>{label}</Text>
+      <Text style={styles.notePreview}>{content}</Text>
+      <View style={styles.noteActionsRow}>
+        <Pressable onPress={onEdit}>
+          <Text style={styles.linkText}>Edit</Text>
+        </Pressable>
+        <Pressable onPress={onRemove}>
+          <Text style={styles.removeText}>Remove</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+// Shared edit form for note/event — differs only by these props
+function FieldEditor({
+  value,
+  onChangeText,
+  maxLength,
+  placeholder,
+  multiline,
+  hint,
+  onSave,
+  onBack,
+}: {
+  value: string;
+  onChangeText: (v: string) => void;
+  maxLength: number;
+  placeholder: string;
+  multiline?: boolean;
+  hint?: string;
+  onSave: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <>
+      <TextInput
+        style={styles.noteInput}
+        multiline={multiline}
+        maxLength={maxLength}
+        placeholder={placeholder}
+        value={value}
+        onChangeText={onChangeText}
+      />
+      <Text style={styles.charCounter}>
+        {value.length}/{maxLength}
+      </Text>
+      {hint && <Text style={styles.eventHint}>{hint}</Text>}
+      <Pressable style={styles.optionButton} onPress={onSave}>
+        <Text style={styles.optionText}>Save</Text>
+      </Pressable>
+      <Pressable style={styles.cancelButton} onPress={onBack}>
+        <Text style={styles.cancelText}>Back</Text>
+      </Pressable>
+    </>
+  );
+}
 
 export default function CalendarScreen() {
   const calendarRef = useRef<any>(null);
   const [dateNight, setDateNight] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [customEvents, setCustomEvents] = useState<Record<string, string>>({});
+  const [events, setEvents] = useState<Record<string, string>>({});
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [optionsVisible, setOptionsVisible] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>("options");
@@ -62,31 +144,30 @@ export default function CalendarScreen() {
   const [calendarKey, setCalendarKey] = useState(0);
 
   useEffect(() => {
-    AsyncStorage.getItem(DATE_NIGHT_STORAGE_KEY).then((saved) => {
-      if (saved) setDateNight(saved);
-    });
-    AsyncStorage.getItem(NOTES_STORAGE_KEY).then((saved) => {
-      if (saved) setNotes(JSON.parse(saved));
-    });
-    AsyncStorage.getItem(CUSTOM_EVENTS_STORAGE_KEY).then((saved) => {
-      if (saved) setCustomEvents(JSON.parse(saved));
+    Promise.all([
+      AsyncStorage.getItem(DATE_NIGHT_KEY),
+      AsyncStorage.getItem(NOTES_KEY),
+      AsyncStorage.getItem(EVENTS_KEY),
+    ]).then(([dn, n, e]) => {
+      if (dn) setDateNight(dn);
+      if (n) setNotes(JSON.parse(n));
+      if (e) setEvents(JSON.parse(e));
     });
   }, []);
 
-  const isDateNight = selectedDate !== null && selectedDate === dateNight;
+  const isDateNight = selectedDate === dateNight && selectedDate !== null;
   const existingNote = selectedDate ? notes[selectedDate] : undefined;
-  const selectedMonthDay = selectedDate ? selectedDate.slice(5) : null;
-  const existingCustomEvent = selectedMonthDay
-    ? customEvents[selectedMonthDay]
-    : undefined;
+  const monthDay = selectedDate?.slice(5) ?? null;
+  const existingEvent = monthDay ? events[monthDay] : undefined;
+  const isFutureDate = !!selectedDate && selectedDate > TODAY;
 
   const holidayName = useMemo(() => {
     if (!selectedDate) return null;
     const year = Number(selectedDate.split("-")[0]);
-    const match = hd
-      .getHolidays(year)
-      .find((h) => h.date.startsWith(selectedDate));
-    return match?.name ?? null;
+    return (
+      hd.getHolidays(year).find((h) => h.date.startsWith(selectedDate))?.name ??
+      null
+    );
   }, [selectedDate]);
 
   const dateLabels = useMemo(() => {
@@ -95,185 +176,165 @@ export default function CalendarScreen() {
     const [annYearStr, annMonthStr, annDayStr] = ANNIVERSARY_DATE.split("-");
     const [, yourMonthStr, yourDayStr] = YOUR_BIRTHDAY.split("-");
     const [, partnerMonthStr, partnerDayStr] = PARTNER_BIRTHDAY.split("-");
-
     const labels: string[] = [];
 
     if (dayStr === annDayStr) {
-      const year = Number(yearStr);
-      const month = Number(monthStr);
-      const annYear = Number(annYearStr);
-      const annMonth = Number(annMonthStr);
-      const monthsElapsed = (year - annYear) * 12 + (month - annMonth);
-
-      if (monthsElapsed === 0) {
-        labels.push("Anniversary");
-      } else if (monthsElapsed > 0) {
-        if (monthsElapsed % 12 === 0) {
-          labels.push(`${getOrdinal(monthsElapsed / 12)} Anniversary`);
-        } else {
-          labels.push(`${getOrdinal(monthsElapsed)} Monthsary`);
-        }
-      }
+      const elapsed =
+        (Number(yearStr) - Number(annYearStr)) * 12 +
+        (Number(monthStr) - Number(annMonthStr));
+      if (elapsed === 0) labels.push("Anniversary");
+      else if (elapsed > 0)
+        labels.push(
+          elapsed % 12 === 0
+            ? `${getOrdinal(elapsed / 12)} Anniversary`
+            : `${getOrdinal(elapsed)} Monthsary`,
+        );
     }
-
     if (monthStr === yourMonthStr && dayStr === yourDayStr)
       labels.push("Your birthday");
     if (monthStr === partnerMonthStr && dayStr === partnerDayStr)
       labels.push("Her birthday");
-
     return labels;
   }, [selectedDate]);
 
-  const sortedNoteEntries = useMemo(() => {
-    return Object.entries(notes)
-      .filter(([, text]) => text?.trim())
-      .sort(([a], [b]) => (a < b ? -1 : 1));
-  }, [notes]);
+  const sortedNotes = useMemo(
+    () =>
+      Object.entries(notes)
+        .filter(([, t]) => t?.trim())
+        .sort(([a], [b]) => (a < b ? -1 : 1)),
+    [notes],
+  );
 
-  const jumpToMonth = (year: number, monthIndexZeroBased: number) => {
-    const isStartMonth =
-      year === START_YEAR && monthIndexZeroBased === START_MONTH - 1;
-    if (isStartMonth) {
-      // scrollToMonth has a known issue landing back on the very first
-      // rendered month — remounting is the reliable workaround here
-      setCalendarKey((k) => k + 1);
+  const jumpToMonth = (year: number, monthIdx: number) => {
+    if (year === START_YEAR && monthIdx === START_MONTH - 1) {
+      setCalendarKey((k) => k + 1); // scrollToMonth can't reliably land back on the first rendered month
     } else {
-      setTimeout(() => {
-        calendarRef.current?.scrollToMonth(
-          new Date(year, monthIndexZeroBased, 1),
-        );
-      }, 100);
+      setTimeout(
+        () => calendarRef.current?.scrollToMonth(new Date(year, monthIdx, 1)),
+        100,
+      );
     }
   };
 
   const handleToday = () => {
     const now = new Date();
     jumpToMonth(now.getFullYear(), now.getMonth());
-    setSelectedDate(formatDateISO(now));
-  };
-
-  const handleDayPress = (day: DateData) => {
-    setSelectedDate(day.dateString);
+    setSelectedDate(TODAY);
   };
 
   const openOptions = () => {
     setNoteDraft(selectedDate ? (notes[selectedDate] ?? "") : "");
-    setEventDraft(
-      selectedMonthDay ? (customEvents[selectedMonthDay] ?? "") : "",
-    );
+    setEventDraft(monthDay ? (events[monthDay] ?? "") : "");
     setModalMode("options");
     setOptionsVisible(true);
   };
-
   const closeOptions = () => setOptionsVisible(false);
 
-  const handleSetDateNight = async () => {
+  const persist = async (key: string, value: any) =>
+    AsyncStorage.setItem(
+      key,
+      typeof value === "string" ? value : JSON.stringify(value),
+    );
+
+  const setAndSave = <T,>(setter: (v: T) => void, key: string, value: T) => {
+    setter(value);
+    persist(key, value);
+  };
+
+  const handleSetDateNight = () => {
     if (!selectedDate) return;
-    setDateNight(selectedDate);
-    await AsyncStorage.setItem(DATE_NIGHT_STORAGE_KEY, selectedDate);
+    setAndSave(setDateNight, DATE_NIGHT_KEY, selectedDate);
+    closeOptions();
+  };
+  const handleRemoveDateNight = async () => {
+    setDateNight(null);
+    await AsyncStorage.removeItem(DATE_NIGHT_KEY);
     closeOptions();
   };
 
-  const handleRemoveDateNight = async () => {
-    setDateNight(null);
-    await AsyncStorage.removeItem(DATE_NIGHT_STORAGE_KEY);
+  const handleSaveNote = () => {
+    if (!selectedDate) return;
+    setAndSave(setNotes, NOTES_KEY, { ...notes, [selectedDate]: noteDraft });
+    closeOptions();
+  };
+  const handleRemoveNote = () => {
+    if (!selectedDate) return;
+    const updated = { ...notes };
+    delete updated[selectedDate];
+    setAndSave(setNotes, NOTES_KEY, updated);
+    closeOptions();
+  };
+
+  const handleSaveEvent = () => {
+    if (!monthDay) return;
+    setAndSave(setEvents, EVENTS_KEY, { ...events, [monthDay]: eventDraft });
+    closeOptions();
+  };
+  const handleRemoveEvent = () => {
+    if (!monthDay) return;
+    const updated = { ...events };
+    delete updated[monthDay];
+    setAndSave(setEvents, EVENTS_KEY, updated);
     closeOptions();
   };
 
   const handleAddMemory = () => {
-    closeOptions();
-    router.push("/memories");
-  };
-
-  const handleSaveNote = async () => {
     if (!selectedDate) return;
-    const updated = { ...notes, [selectedDate]: noteDraft };
-    setNotes(updated);
-    await AsyncStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(updated));
+    if (isFutureDate) {
+      Alert.alert(
+        "Unavailable",
+        "You can add photos and videos to this day once it actually happens!",
+      );
+      return;
+    }
     closeOptions();
-  };
-
-  const handleRemoveNote = async () => {
-    if (!selectedDate) return;
-    const updated = { ...notes };
-    delete updated[selectedDate];
-    setNotes(updated);
-    await AsyncStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(updated));
-    closeOptions();
-  };
-
-  const handleSaveCustomEvent = async () => {
-    if (!selectedMonthDay) return;
-    const updated = { ...customEvents, [selectedMonthDay]: eventDraft };
-    setCustomEvents(updated);
-    await AsyncStorage.setItem(
-      CUSTOM_EVENTS_STORAGE_KEY,
-      JSON.stringify(updated),
-    );
-    closeOptions();
-  };
-
-  const handleRemoveCustomEvent = async () => {
-    if (!selectedMonthDay) return;
-    const updated = { ...customEvents };
-    delete updated[selectedMonthDay];
-    setCustomEvents(updated);
-    await AsyncStorage.setItem(
-      CUSTOM_EVENTS_STORAGE_KEY,
-      JSON.stringify(updated),
-    );
-    closeOptions();
+    router.push({ pathname: "/memories", params: { date: selectedDate } });
   };
 
   const markedDates = useMemo(() => {
     const marks: Record<string, any> = {};
     const addDot = (date: string, key: string, color: string) => {
+      if (date < APP_START_DATE) return;
       if (!marks[date]) marks[date] = { dots: [] };
       marks[date].dots.push({ key, color });
     };
 
-    const currentYear = new Date().getFullYear();
-    [currentYear, currentYear + 1].forEach((year) => {
-      hd.getHolidays(year).forEach((holiday) => {
-        const date = holiday.date.split(" ")[0];
-        if (date >= APP_START_DATE)
-          addDot(date, `holiday-${holiday.name}`, "#f2b134");
-      });
-    });
-
-    getYearlyOccurrences(YOUR_BIRTHDAY)
-      .filter((date) => date >= APP_START_DATE)
-      .forEach((date) => addDot(date, "birthday-you", "#8e6bd6"));
-
-    getYearlyOccurrences(PARTNER_BIRTHDAY)
-      .filter((date) => date >= APP_START_DATE)
-      .forEach((date) => addDot(date, "birthday-partner", "#8e6bd6"));
-
-    getMonthsaryOccurrences(ANNIVERSARY_DATE)
-      .filter((date) => date >= APP_START_DATE)
-      .forEach((date) => addDot(date, "anniversary", "#e75480"));
-
-    Object.keys(customEvents).forEach((monthDay) => {
-      getYearlyOccurrencesFromMonthDay(monthDay, START_YEAR, 5)
-        .filter((date) => date >= APP_START_DATE)
-        .forEach((date) => addDot(date, `custom-${monthDay}`, "#3aa17e"));
-    });
-
+    const year = new Date().getFullYear();
+    [year, year + 1].forEach((y) =>
+      hd
+        .getHolidays(y)
+        .forEach((h) =>
+          addDot(h.date.split(" ")[0], `holiday-${h.name}`, "#f2b134"),
+        ),
+    );
+    getYearlyOccurrences(YOUR_BIRTHDAY).forEach((d) =>
+      addDot(d, "bday-you", "#8e6bd6"),
+    );
+    getYearlyOccurrences(PARTNER_BIRTHDAY).forEach((d) =>
+      addDot(d, "bday-partner", "#8e6bd6"),
+    );
+    getMonthsaryOccurrences(ANNIVERSARY_DATE).forEach((d) =>
+      addDot(d, "anniversary", "#e75480"),
+    );
+    Object.keys(events).forEach((md) =>
+      getYearlyOccurrencesFromMonthDay(md, START_YEAR, 5).forEach((d) =>
+        addDot(d, `event-${md}`, "#3aa17e"),
+      ),
+    );
     if (dateNight) addDot(dateNight, "dateNight", "#6bb9d6");
-    Object.keys(notes).forEach((date) => {
-      if (notes[date]?.trim()) addDot(date, "note", "#b5b5b5");
-    });
+    Object.entries(notes).forEach(
+      ([d, t]) => t?.trim() && addDot(d, "note", "#b5b5b5"),
+    );
 
     if (selectedDate) {
       marks[selectedDate] = {
         ...marks[selectedDate],
         selected: true,
-        selectedColor: "rgba(231, 84, 128, 0.15)",
+        selectedColor: "rgba(231,84,128,0.15)",
       };
     }
-
     return marks;
-  }, [dateNight, notes, customEvents, selectedDate]);
+  }, [dateNight, notes, events, selectedDate]);
 
   const dateNightCountdown = dateNight ? daysUntil(dateNight) : null;
 
@@ -295,8 +356,8 @@ export default function CalendarScreen() {
         <View style={styles.countdownBanner}>
           <Text style={styles.countdownText}>
             {dateNightCountdown === 0
-              ? "Date night is today"
-              : `${dateNightCountdown} day${dateNightCountdown === 1 ? "" : "s"} until your date night`}
+              ? "Your date is today"
+              : `${dateNightCountdown} day${dateNightCountdown === 1 ? "" : "s"} until your date`}
           </Text>
         </View>
       )}
@@ -308,16 +369,15 @@ export default function CalendarScreen() {
         pastScrollRange={0}
         futureScrollRange={120}
         windowSize={21}
-        scrollEnabled={true}
-        horizontal={true}
-        pagingEnabled={true}
+        horizontal
+        pagingEnabled
         showScrollIndicator={false}
-        hideArrows={true}
+        hideArrows
         calendarWidth={SCREEN_WIDTH - 40}
         minDate={APP_START_DATE}
         markedDates={markedDates}
         markingType="multi-dot"
-        onDayPress={handleDayPress}
+        onDayPress={(d: DateData) => setSelectedDate(d.dateString)}
         theme={{ todayTextColor: "#e75480", arrowColor: "#e75480" }}
         renderHeader={(date: any) => {
           const d = new Date(date);
@@ -348,30 +408,23 @@ export default function CalendarScreen() {
                 <Text style={styles.moreOptions}>More options</Text>
               </Pressable>
             </View>
-
             {isDateNight && (
-              <Text style={styles.panelDateNight}>
-                This is your next date night
-              </Text>
+              <Text style={styles.panelDateNight}>Your next date</Text>
             )}
-
             {holidayName && (
               <Text style={styles.panelHoliday}>{holidayName}</Text>
             )}
-
-            {dateLabels.map((label) => (
-              <Text key={label} style={styles.panelLabel}>
-                {label}
+            {dateLabels.map((l) => (
+              <Text key={l} style={styles.panelLabel}>
+                {l}
               </Text>
             ))}
-
-            {existingCustomEvent && (
+            {existingEvent && (
               <>
                 <Text style={styles.noteLabel}>Yearly event</Text>
-                <Text style={styles.notePreview}>{existingCustomEvent}</Text>
+                <Text style={styles.notePreview}>{existingEvent}</Text>
               </>
             )}
-
             <Text style={styles.noteLabel}>Note</Text>
             <Text
               style={existingNote ? styles.notePreview : styles.notePlaceholder}
@@ -396,13 +449,11 @@ export default function CalendarScreen() {
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.sheetDate}>{selectedDate}</Text>
 
-            {modalMode === "options" ? (
+            {modalMode === "options" && (
               <>
                 {isDateNight ? (
                   <View style={styles.statusCard}>
-                    <Text style={styles.statusText}>
-                      Set as next date night
-                    </Text>
+                    <Text style={styles.statusText}>Set as next date</Text>
                     <Pressable onPress={handleRemoveDateNight}>
                       <Text style={styles.removeText}>Remove</Text>
                     </Pressable>
@@ -412,65 +463,41 @@ export default function CalendarScreen() {
                     style={styles.optionButton}
                     onPress={handleSetDateNight}
                   >
-                    <Text style={styles.optionText}>
-                      Set as next date night
-                    </Text>
+                    <Text style={styles.optionText}>Set as next date</Text>
                   </Pressable>
                 )}
 
-                {existingNote ? (
-                  <View style={styles.statusCard}>
-                    <Text style={styles.noteLabel}>Note</Text>
-                    <Text style={styles.notePreview}>{existingNote}</Text>
-                    <View style={styles.noteActionsRow}>
-                      <Pressable onPress={() => setModalMode("note")}>
-                        <Text style={styles.linkText}>Edit</Text>
-                      </Pressable>
-                      <Pressable onPress={handleRemoveNote}>
-                        <Text style={styles.removeText}>Remove</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ) : (
-                  <Pressable
-                    style={styles.optionButton}
-                    onPress={() => setModalMode("note")}
-                  >
-                    <Text style={styles.optionText}>Add a note</Text>
-                  </Pressable>
-                )}
+                <EditableEntry
+                  label="Note"
+                  content={existingNote}
+                  onEdit={() => setModalMode("note")}
+                  onRemove={handleRemoveNote}
+                  onAdd={() => setModalMode("note")}
+                  addLabel="Add a note"
+                />
 
-                {existingCustomEvent ? (
-                  <View style={styles.statusCard}>
-                    <Text style={styles.noteLabel}>Yearly event</Text>
-                    <Text style={styles.notePreview}>
-                      {existingCustomEvent}
-                    </Text>
-                    <View style={styles.noteActionsRow}>
-                      <Pressable onPress={() => setModalMode("event")}>
-                        <Text style={styles.linkText}>Edit</Text>
-                      </Pressable>
-                      <Pressable onPress={handleRemoveCustomEvent}>
-                        <Text style={styles.removeText}>Remove</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ) : (
-                  <Pressable
-                    style={styles.optionButton}
-                    onPress={() => setModalMode("event")}
-                  >
-                    <Text style={styles.optionText}>
-                      Make this a yearly event
-                    </Text>
-                  </Pressable>
-                )}
+                <EditableEntry
+                  label="Yearly event"
+                  content={existingEvent}
+                  onEdit={() => setModalMode("event")}
+                  onRemove={handleRemoveEvent}
+                  onAdd={() => setModalMode("event")}
+                  addLabel="Make this a yearly event"
+                />
 
                 <Pressable
-                  style={styles.optionButton}
+                  style={[
+                    styles.optionButton,
+                    isFutureDate && styles.optionButtonDisabled,
+                  ]}
                   onPress={handleAddMemory}
                 >
-                  <Text style={styles.optionText}>
+                  <Text
+                    style={[
+                      styles.optionText,
+                      isFutureDate && styles.optionTextDisabled,
+                    ]}
+                  >
                     Add picture/video to this date
                   </Text>
                 </Pressable>
@@ -479,53 +506,30 @@ export default function CalendarScreen() {
                   <Text style={styles.cancelText}>Cancel</Text>
                 </Pressable>
               </>
-            ) : modalMode === "note" ? (
-              <>
-                <TextInput
-                  style={styles.noteInput}
-                  multiline
-                  maxLength={300}
-                  placeholder="Write something to remember..."
-                  value={noteDraft}
-                  onChangeText={setNoteDraft}
-                />
-                <Text style={styles.charCounter}>{noteDraft.length}/300</Text>
-                <Pressable style={styles.optionButton} onPress={handleSaveNote}>
-                  <Text style={styles.optionText}>Save note</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.cancelButton}
-                  onPress={() => setModalMode("options")}
-                >
-                  <Text style={styles.cancelText}>Back</Text>
-                </Pressable>
-              </>
-            ) : (
-              <>
-                <TextInput
-                  style={styles.noteInput}
-                  maxLength={60}
-                  placeholder="e.g. Her mom's birthday"
-                  value={eventDraft}
-                  onChangeText={setEventDraft}
-                />
-                <Text style={styles.charCounter}>{eventDraft.length}/60</Text>
-                <Text style={styles.eventHint}>
-                  Repeats every year on this month and day
-                </Text>
-                <Pressable
-                  style={styles.optionButton}
-                  onPress={handleSaveCustomEvent}
-                >
-                  <Text style={styles.optionText}>Save event</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.cancelButton}
-                  onPress={() => setModalMode("options")}
-                >
-                  <Text style={styles.cancelText}>Back</Text>
-                </Pressable>
-              </>
+            )}
+
+            {modalMode === "note" && (
+              <FieldEditor
+                value={noteDraft}
+                onChangeText={setNoteDraft}
+                maxLength={300}
+                placeholder="Write something to remember..."
+                multiline
+                onSave={handleSaveNote}
+                onBack={() => setModalMode("options")}
+              />
+            )}
+
+            {modalMode === "event" && (
+              <FieldEditor
+                value={eventDraft}
+                onChangeText={setEventDraft}
+                maxLength={60}
+                placeholder="e.g. Her mom's birthday"
+                hint="Repeats every year on this month and day"
+                onSave={handleSaveEvent}
+                onBack={() => setModalMode("options")}
+              />
             )}
           </Pressable>
         </Pressable>
@@ -543,7 +547,6 @@ export default function CalendarScreen() {
         >
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.sheetDate}>Jump to month</Text>
-
             <View style={styles.pickerRow}>
               <Pressable
                 disabled={pickerYear <= START_YEAR}
@@ -563,34 +566,32 @@ export default function CalendarScreen() {
                 <Text style={styles.pickerArrow}>›</Text>
               </Pressable>
             </View>
-
             <View style={styles.monthGrid}>
-              {Array.from({ length: 12 }, (_, i) => i).map((monthIndex) => {
-                const isDisabled =
-                  pickerYear === START_YEAR && monthIndex < START_MONTH - 1;
+              {Array.from({ length: 12 }, (_, i) => i).map((m) => {
+                const disabled =
+                  pickerYear === START_YEAR && m < START_MONTH - 1;
                 return (
                   <Pressable
-                    key={monthIndex}
-                    disabled={isDisabled}
+                    key={m}
+                    disabled={disabled}
                     style={[
                       styles.monthCell,
-                      isDisabled && styles.monthCellDisabled,
+                      disabled && styles.monthCellDisabled,
                     ]}
                     onPress={() => {
                       setMonthPickerVisible(false);
-                      jumpToMonth(pickerYear, monthIndex);
+                      jumpToMonth(pickerYear, m);
                     }}
                   >
                     <Text
                       style={[
                         styles.monthCellText,
-                        isDisabled && styles.monthCellTextDisabled,
+                        disabled && styles.monthCellTextDisabled,
                       ]}
                     >
-                      {new Date(2000, monthIndex, 1).toLocaleDateString(
-                        "en-US",
-                        { month: "short" },
-                      )}
+                      {new Date(2000, m, 1).toLocaleDateString("en-US", {
+                        month: "short",
+                      })}
                     </Text>
                   </Pressable>
                 );
@@ -616,10 +617,10 @@ export default function CalendarScreen() {
           >
             <Text style={styles.sheetDate}>All notes</Text>
             <ScrollView>
-              {sortedNoteEntries.length === 0 ? (
+              {sortedNotes.length === 0 ? (
                 <Text style={styles.notePlaceholder}>No notes yet</Text>
               ) : (
-                sortedNoteEntries.map(([date, text]) => (
+                sortedNotes.map(([date, text]) => (
                   <Pressable
                     key={date}
                     style={styles.noteListItem}
@@ -711,7 +712,9 @@ const styles = StyleSheet.create({
   },
   sheetDate: { fontSize: 16, fontWeight: "700", marginBottom: 8 },
   optionButton: { backgroundColor: "#fff5f7", borderRadius: 12, padding: 14 },
+  optionButtonDisabled: { opacity: 0.5 },
   optionText: { fontSize: 15, fontWeight: "600", color: "#e75480" },
+  optionTextDisabled: { color: "#bbb" },
   cancelButton: { padding: 14, alignItems: "center" },
   cancelText: { color: "#999" },
   noteInput: {

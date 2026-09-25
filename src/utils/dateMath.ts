@@ -11,12 +11,12 @@ export function getMonthsAndDays(fromISO: string) {
   const [year, month, day] = fromISO.split("-").map(Number);
   const from = new Date(year, month - 1, day);
   const now = new Date();
-  let months =
+  let totalMonths =
     (now.getFullYear() - from.getFullYear()) * 12 +
     (now.getMonth() - from.getMonth());
   let days = now.getDate() - from.getDate();
   if (days < 0) {
-    months -= 1;
+    totalMonths -= 1;
     const daysInPrevMonth = new Date(
       now.getFullYear(),
       now.getMonth(),
@@ -24,7 +24,9 @@ export function getMonthsAndDays(fromISO: string) {
     ).getDate();
     days += daysInPrevMonth;
   }
-  return { months, days };
+  const years = Math.floor(totalMonths / 12);
+  const months = totalMonths % 12;
+  return { years, months, days };
 }
 
 export function getAge(birthISO: string) {
