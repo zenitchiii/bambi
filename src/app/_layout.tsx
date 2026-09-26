@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { Calendar, Heart, Home, Images } from "lucide-react-native";
+import { Calendar, HelpCircle, Home, Images } from "lucide-react-native";
 
 export default function TabLayout() {
   return (
@@ -43,10 +43,12 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="poke"
+        name="quiz"
         options={{
-          title: "Poke",
-          tabBarIcon: ({ color, size }) => <Heart color={color} size={size} />,
+          title: "Quiz",
+          tabBarIcon: ({ color, size }) => (
+            <HelpCircle color={color} size={size} />
+          ),
         }}
       />
     </Tabs>

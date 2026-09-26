@@ -17,19 +17,27 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { useFocusEffect } from "expo-router";
-import { CalendarHeart, Heart } from "lucide-react-native";
+import { CalendarHeart, HandHeart, Heart } from "lucide-react-native";
 import { useCallback, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 
 const DATE_NIGHT_STORAGE_KEY = "nextDateNight";
 const CUSTOM_EVENTS_STORAGE_KEY = "customEvents";
 const MEMORIES_KEY = "memories";
+const POKE_KEY = "lastPoke";
 const UPCOMING_WINDOW_DAYS = 30;
 const [START_YEAR] = APP_START_DATE.split("-").map(Number);
 
 export default function HomeScreen() {
   const [dateNight, setDateNight] = useState<string | null>(null);
   const [customEvents, setCustomEvents] = useState<Record<string, string>>({});
+  const [lastPoke, setLastPoke] = useState<number | null>(null);
   const [onThisDay, setOnThisDay] = useState<{ uri: string; date: string }[]>(
     [],
   );
@@ -42,6 +50,9 @@ export default function HomeScreen() {
       AsyncStorage.getItem(CUSTOM_EVENTS_STORAGE_KEY).then((saved) => {
         setCustomEvents(saved ? JSON.parse(saved) : {});
       });
+      AsyncStorage.getItem(POKE_KEY).then((saved) =>
+        setLastPoke(saved ? Number(saved) : null),
+      );
       AsyncStorage.getItem(MEMORIES_KEY).then((saved) => {
         if (!saved) return setOnThisDay([]);
         const all = JSON.parse(saved);
@@ -104,6 +115,31 @@ export default function HomeScreen() {
       !!item && item.days >= 0 && item.days <= UPCOMING_WINDOW_DAYS,
   );
 
+  const pokeScale = useSharedValue(1);
+  const pokeAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pokeScale.value }],
+  }));
+
+  const sendPoke = async () => {
+    pokeScale.value = withSequence(
+      withTiming(1.3, { duration: 100 }),
+      withTiming(1, { duration: 100 }),
+    );
+    const now = Date.now();
+    setLastPoke(now);
+    await AsyncStorage.setItem(POKE_KEY, String(now));
+    // TODO: once backend/push notifications exist, actually notify her phone here
+  };
+
+  function formatPokeTime(ts: number): string {
+    const mins = Math.round((Date.now() - ts) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+  }
+
   return (
     <ScreenContainer>
       <View style={styles.card}>
@@ -147,6 +183,20 @@ export default function HomeScreen() {
               </Text>
             ))
         )}
+      </View>
+
+      <View style={styles.card}>
+        <Pressable onPress={sendPoke} style={{ alignSelf: "flex-start" }}>
+          <Animated.View style={pokeAnimStyle}>
+            <HandHeart color="#e75480" size={28} />
+          </Animated.View>
+        </Pressable>
+        <Text style={styles.cardTitle}>Miss you button</Text>
+        <Text style={styles.cardBig}>
+          {lastPoke
+            ? `Poked ${formatPokeTime(lastPoke)}`
+            : "Tap the icon to poke her"}
+        </Text>
       </View>
     </ScreenContainer>
   );
