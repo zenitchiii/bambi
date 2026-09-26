@@ -35,7 +35,8 @@ import {
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
+  withSequence,
+  withTiming,
 } from "react-native-reanimated";
 
 const MEMORIES_KEY = "memories";
@@ -140,11 +141,16 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function VideoPage({ uri }: { uri: string }) {
+function VideoPage({ uri, isActive }: { uri: string; isActive: boolean }) {
   const player = useVideoPlayer(uri, (p) => {
     p.timeUpdateEventInterval = 0.5;
-    p.play();
+    if (isActive) p.play();
   });
+
+  useEffect(() => {
+    if (isActive) player.play();
+    else player.pause();
+  }, [isActive]);
   const { isPlaying } = useEvent(player, "playingChange", {
     isPlaying: player.playing,
   });
@@ -211,32 +217,27 @@ function VideoPage({ uri }: { uri: string }) {
   );
 }
 
-function AnimatedHeartButton({
-  favorite,
+function AnimatedIconButton({
   onPress,
+  children,
 }: {
-  favorite?: boolean;
   onPress: () => void;
+  children: React.ReactNode;
 }) {
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
   const handlePress = () => {
-    scale.value = withSpring(1.4, { damping: 4 }, () => {
-      scale.value = withSpring(1);
-    });
+    scale.value = withSequence(
+      withTiming(1.3, { duration: 100 }),
+      withTiming(1, { duration: 100 }),
+    );
     onPress();
   };
   return (
     <Pressable onPress={handlePress} style={styles.iconButton}>
-      <Animated.View style={animatedStyle}>
-        <Heart
-          color="#fff"
-          size={20}
-          fill={favorite ? "#e75480" : "transparent"}
-        />
-      </Animated.View>
+      <Animated.View style={animatedStyle}>{children}</Animated.View>
     </Pressable>
   );
 }
@@ -245,13 +246,15 @@ export default function MemoriesScreen() {
   const params = useLocalSearchParams<{ date?: string }>();
 
   const [memories, setMemories] = useState<Memory[]>([]);
-  const [covers, setCovers] = useState<Record<string, string>>({});
+  const [covers, setCovers] = useState<
+    Record<string, { itemId: string; setAt: number }>
+  >({});
   const [openMonth, setOpenMonth] = useState<string | null>(null); // "YYYY-MM"
   const [openAlbum, setOpenAlbum] = useState<string | null>(null); // "YYYY-MM-DD" or FAVORITES_ALBUM
   const [yearFilter, setYearFilter] = useState<string | null>(null);
   const [filterVisible, setFilterVisible] = useState(false);
 
-  const [viewerList, setViewerList] = useState<Memory[] | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [captionDraft, setCaptionDraft] = useState("");
   const [editingCaption, setEditingCaption] = useState(false);
@@ -290,7 +293,9 @@ export default function MemoriesScreen() {
     setMemories(updated);
     await AsyncStorage.setItem(MEMORIES_KEY, JSON.stringify(updated));
   };
-  const saveCovers = async (updated: Record<string, string>) => {
+  const saveCovers = async (
+    updated: Record<string, { itemId: string; setAt: number }>,
+  ) => {
     setCovers(updated);
     await AsyncStorage.setItem(COVERS_KEY, JSON.stringify(updated));
   };
@@ -302,7 +307,7 @@ export default function MemoriesScreen() {
     if (isFutureAlbum) {
       Alert.alert(
         "Not yet!",
-        "You can add photos and videos to this day once it actually happens 💕",
+        "You can add photos and videos to this day once it actually happens",
       );
       return;
     }
@@ -355,13 +360,28 @@ export default function MemoriesScreen() {
     });
     return Object.entries(map)
       .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([month, days]) => ({
-        month,
-        days,
-        itemCount: days.reduce((sum, d) => sum + d.items.length, 0),
-        coverUri: days[0].items[0]?.uri,
-      }));
-  }, [daySections]);
+      .map(([month, days]) => {
+        // Pick whichever day's cover was set most recently in real time (setAt),
+        // not by the day's own date — so covering an older day always wins if
+        // it was the last cover you actually touched
+        const daysWithCover = days.filter((d) => covers[d.date]);
+        const mostRecentlySetDay = daysWithCover.sort(
+          (a, b) => covers[b.date].setAt - covers[a.date].setAt,
+        )[0];
+        const coverUri = mostRecentlySetDay
+          ? mostRecentlySetDay.items.find(
+              (i) => i.id === covers[mostRecentlySetDay.date].itemId,
+            )?.uri
+          : days[0].items[0]?.uri;
+
+        return {
+          month,
+          days,
+          itemCount: days.reduce((sum, d) => sum + d.items.length, 0),
+          coverUri,
+        };
+      });
+  }, [daySections, covers]);
 
   const availableYears = useMemo(
     () =>
@@ -395,16 +415,31 @@ export default function MemoriesScreen() {
     );
   }, [openAlbum, favorites, daySections]);
 
+  useEffect(() => {
+    if (openAlbum === FAVORITES_ALBUM && favorites.length === 0) {
+      setOpenAlbum(null);
+    }
+  }, [openAlbum, favorites]);
+
+  const viewerSourceList =
+    openAlbum === FAVORITES_ALBUM ? favorites : currentAlbumItems;
+
+  useEffect(() => {
+    if (openAlbum === FAVORITES_ALBUM && favorites.length === 0) {
+      setOpenAlbum(null);
+      setViewerOpen(false);
+    }
+  }, [openAlbum, favorites]);
   // ---------- viewer ----------
-  const openViewer = (list: Memory[], index: number) => {
-    setViewerList(list);
+  const openViewer = (index: number) => {
     setViewerIndex(index);
+    setViewerOpen(true);
   };
   const closeViewer = () => {
-    setViewerList(null);
+    setViewerOpen(false);
     setEditingCaption(false);
   };
-  const currentViewerItem = viewerList?.[viewerIndex] ?? null;
+  const currentViewerItem = viewerSourceList[viewerIndex] ?? null;
 
   const updateMemory = (id: string, patch: Partial<Memory>) =>
     saveMemories(memories.map((m) => (m.id === id ? { ...m, ...patch } : m)));
@@ -435,14 +470,18 @@ export default function MemoriesScreen() {
 
   const setAsCover = (item: Memory) => {
     if (!openAlbum || openAlbum === FAVORITES_ALBUM) return;
-    saveCovers({ ...covers, [openAlbum]: item.id });
+    const updated = { ...covers };
+    if (updated[openAlbum]?.itemId === item.id) {
+      delete updated[openAlbum];
+    } else {
+      updated[openAlbum] = { itemId: item.id, setAt: Date.now() };
+    }
+    saveCovers(updated);
   };
 
   // ---------- item selection (inside a day) ----------
   const handleItemPress = (item: Memory, index: number) =>
-    itemSelection.active
-      ? itemSelection.toggle(item.id)
-      : openViewer(currentAlbumItems, index);
+    itemSelection.active ? itemSelection.toggle(item.id) : openViewer(index);
   const handleItemLongPress = (item: Memory) => {
     if (!itemSelection.active) itemSelection.enter(item.id);
   };
@@ -557,7 +596,7 @@ export default function MemoriesScreen() {
   const goToCalendarDate = (date: string) =>
     router.push({ pathname: "/calendar", params: { date } });
   const dayCoverUri = (date: string, items: Memory[]) =>
-    items.find((i) => i.id === covers[date])?.uri ?? items[0].uri;
+    items.find((i) => i.id === covers[date]?.itemId)?.uri ?? items[0].uri;
 
   // ================= LEVEL 0: Month grid =================
   if (!openMonth && !openAlbum) {
@@ -693,8 +732,9 @@ export default function MemoriesScreen() {
         )}
 
         <MediaViewer
-          list={viewerList}
+          list={viewerSourceList}
           index={viewerIndex}
+          visible={viewerOpen}
           onIndexChange={setViewerIndex}
           onClose={closeViewer}
           onToggleFavorite={toggleFavorite}
@@ -855,7 +895,8 @@ export default function MemoriesScreen() {
         </View>
 
         <MediaViewer
-          list={viewerList}
+          list={viewerSourceList}
+          visible={viewerOpen}
           index={viewerIndex}
           onIndexChange={setViewerIndex}
           onClose={closeViewer}
@@ -1019,7 +1060,8 @@ export default function MemoriesScreen() {
       />
 
       <MediaViewer
-        list={viewerList}
+        list={viewerSourceList}
+        visible={viewerOpen}
         index={viewerIndex}
         onIndexChange={setViewerIndex}
         onClose={closeViewer}
@@ -1031,6 +1073,7 @@ export default function MemoriesScreen() {
         setEditingCaption={setEditingCaption}
         onSaveCaption={saveCaption}
         canSetCover={openAlbum !== FAVORITES_ALBUM}
+        coverId={openAlbum ? covers[openAlbum]?.itemId : undefined}
         onSetCover={setAsCover}
       />
 
@@ -1074,6 +1117,7 @@ export default function MemoriesScreen() {
 
 function MediaViewer({
   list,
+  visible,
   index,
   onIndexChange,
   onClose,
@@ -1085,9 +1129,11 @@ function MediaViewer({
   setEditingCaption,
   onSaveCaption,
   canSetCover,
+  coverId,
   onSetCover,
 }: {
-  list: Memory[] | null;
+  list: Memory[];
+  visible: boolean;
   index: number;
   onIndexChange: (i: number) => void;
   onClose: () => void;
@@ -1099,19 +1145,20 @@ function MediaViewer({
   setEditingCaption: (v: boolean) => void;
   onSaveCaption: () => void;
   canSetCover: boolean;
+  coverId?: string;
   onSetCover: (item: Memory) => void;
 }) {
-  const current = list?.[index] ?? null;
+  const current = list[index] ?? null;
 
   useEffect(() => {
     if (current) setCaptionDraft(current.caption ?? "");
   }, [current?.id]);
 
-  if (!list) return null;
+  if (!visible) return null;
 
   return (
     <Modal
-      visible={!!list}
+      visible={visible}
       transparent
       animationType="fade"
       onRequestClose={onClose}
@@ -1133,7 +1180,7 @@ function MediaViewer({
               Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH),
             )
           }
-          renderItem={({ item }) =>
+          renderItem={({ item, index: itemIndex }) =>
             item.type === "image" ? (
               <View style={styles.page}>
                 <Image
@@ -1144,7 +1191,7 @@ function MediaViewer({
                 />
               </View>
             ) : (
-              <VideoPage uri={item.uri} />
+              <VideoPage uri={item.uri} isActive={itemIndex === index} />
             )
           }
         />
@@ -1155,24 +1202,25 @@ function MediaViewer({
 
         {current && (
           <View style={styles.viewerTopRight}>
-            <AnimatedHeartButton
-              favorite={current.favorite}
-              onPress={() => onToggleFavorite(current)}
-            />
+            <AnimatedIconButton onPress={() => onToggleFavorite(current)}>
+              <Heart
+                color="#fff"
+                size={20}
+                fill={current.favorite ? "#e75480" : "transparent"}
+              />
+            </AnimatedIconButton>
             {canSetCover && (
-              <Pressable
-                onPress={() => onSetCover(current)}
-                style={styles.iconButton}
-              >
-                <Star color="#fff" size={20} />
-              </Pressable>
+              <AnimatedIconButton onPress={() => onSetCover(current)}>
+                <Star
+                  color="#fff"
+                  size={20}
+                  fill={current.id === coverId ? "#d0ff00" : "transparent"}
+                />
+              </AnimatedIconButton>
             )}
-            <Pressable
-              onPress={() => onRemove(current)}
-              style={styles.iconButton}
-            >
+            <AnimatedIconButton onPress={() => onRemove(current)}>
               <Trash2 color="#fff" size={20} />
-            </Pressable>
+            </AnimatedIconButton>
           </View>
         )}
 
