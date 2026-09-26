@@ -14,7 +14,7 @@ import {
 } from "@/utils/dateMath";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Holidays from "date-holidays";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -36,6 +36,10 @@ const EVENTS_KEY = "customEvents";
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const [START_YEAR, START_MONTH] = APP_START_DATE.split("-").map(Number);
 const TODAY = formatDateISO(new Date());
+const FUTURE_RANGE_MONTHS = 60; // 5 years — matches the dateMath default window
+const endDate = new Date(START_YEAR, START_MONTH - 1 + FUTURE_RANGE_MONTHS, 1);
+const END_YEAR = endDate.getFullYear();
+const END_MONTH_INDEX = endDate.getMonth(); // 0-indexed, matches monthIndex in the grid
 
 function getOrdinal(n: number): string {
   const s = ["th", "st", "nd", "rd"];
@@ -142,6 +146,7 @@ export default function CalendarScreen() {
   const [notesListVisible, setNotesListVisible] = useState(false);
   const [pickerYear, setPickerYear] = useState(START_YEAR);
   const [calendarKey, setCalendarKey] = useState(0);
+  const params = useLocalSearchParams<{ date?: string }>();
 
   useEffect(() => {
     Promise.all([
@@ -215,6 +220,14 @@ export default function CalendarScreen() {
       );
     }
   };
+
+  useEffect(() => {
+    if (params.date) {
+      setSelectedDate(params.date);
+      const [y, m] = params.date.split("-").map(Number);
+      jumpToMonth(y, m - 1);
+    }
+  }, [params.date]);
 
   const handleToday = () => {
     const now = new Date();
@@ -299,14 +312,11 @@ export default function CalendarScreen() {
       marks[date].dots.push({ key, color });
     };
 
-    const year = new Date().getFullYear();
-    [year, year + 1].forEach((y) =>
-      hd
-        .getHolidays(y)
-        .forEach((h) =>
-          addDot(h.date.split(" ")[0], `holiday-${h.name}`, "#f2b134"),
-        ),
-    );
+    for (let y = START_YEAR; y <= END_YEAR; y++) {
+      hd.getHolidays(y).forEach((h) =>
+        addDot(h.date.split(" ")[0], `holiday-${h.name}`, "#f2b134"),
+      );
+    }
     getYearlyOccurrences(YOUR_BIRTHDAY).forEach((d) =>
       addDot(d, "bday-you", "#8e6bd6"),
     );
@@ -367,7 +377,7 @@ export default function CalendarScreen() {
         ref={calendarRef}
         current={APP_START_DATE}
         pastScrollRange={0}
-        futureScrollRange={120}
+        futureScrollRange={FUTURE_RANGE_MONTHS}
         windowSize={21}
         horizontal
         pagingEnabled
@@ -562,36 +572,50 @@ export default function CalendarScreen() {
                 </Text>
               </Pressable>
               <Text style={styles.pickerYear}>{pickerYear}</Text>
-              <Pressable onPress={() => setPickerYear((y) => y + 1)}>
-                <Text style={styles.pickerArrow}>›</Text>
+              <Pressable
+                disabled={pickerYear >= END_YEAR}
+                onPress={() => setPickerYear((y) => y + 1)}
+              >
+                <Text
+                  style={[
+                    styles.pickerArrow,
+                    pickerYear >= END_YEAR && styles.pickerArrowDisabled,
+                  ]}
+                >
+                  ›
+                </Text>
               </Pressable>
             </View>
             <View style={styles.monthGrid}>
-              {Array.from({ length: 12 }, (_, i) => i).map((m) => {
-                const disabled =
-                  pickerYear === START_YEAR && m < START_MONTH - 1;
+              {Array.from({ length: 12 }, (_, i) => i).map((monthIndex) => {
+                const beforeStart =
+                  pickerYear === START_YEAR && monthIndex < START_MONTH - 1;
+                const afterEnd =
+                  pickerYear === END_YEAR && monthIndex > END_MONTH_INDEX;
+                const isDisabled = beforeStart || afterEnd;
                 return (
                   <Pressable
-                    key={m}
-                    disabled={disabled}
+                    key={monthIndex}
+                    disabled={isDisabled}
                     style={[
                       styles.monthCell,
-                      disabled && styles.monthCellDisabled,
+                      isDisabled && styles.monthCellDisabled,
                     ]}
                     onPress={() => {
                       setMonthPickerVisible(false);
-                      jumpToMonth(pickerYear, m);
+                      jumpToMonth(pickerYear, monthIndex);
                     }}
                   >
                     <Text
                       style={[
                         styles.monthCellText,
-                        disabled && styles.monthCellTextDisabled,
+                        isDisabled && styles.monthCellTextDisabled,
                       ]}
                     >
-                      {new Date(2000, m, 1).toLocaleDateString("en-US", {
-                        month: "short",
-                      })}
+                      {new Date(2000, monthIndex, 1).toLocaleDateString(
+                        "en-US",
+                        { month: "short" },
+                      )}
                     </Text>
                   </Pressable>
                 );

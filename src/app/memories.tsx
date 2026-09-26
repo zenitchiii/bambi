@@ -3,6 +3,7 @@ import { formatDateISO } from "@/utils/dateMath";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Slider from "@react-native-community/slider";
 import { useEvent } from "expo";
+import * as FileSystem from "expo-file-system/legacy";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
@@ -17,7 +18,7 @@ import {
   RotateCcw,
   Star,
   Trash2,
-  X
+  X,
 } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -31,6 +32,11 @@ import {
   TextInput,
   View,
 } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 
 const MEMORIES_KEY = "memories";
 const COVERS_KEY = "albumCovers";
@@ -43,22 +49,86 @@ const FOLDER_GAP = 14;
 const FOLDER_SIZE = (SCREEN_WIDTH - 40 - FOLDER_GAP) / 2;
 const FAVORITES_ALBUM = "__favorites__";
 const TODAY = formatDateISO(new Date());
+const MEMORIES_DIR = FileSystem.documentDirectory + "memories/";
 
 type Memory = {
   id: string;
   uri: string;
   type: "image" | "video";
-  date: string;
+  date: string; // "YYYY-MM-DD"
   caption?: string;
   favorite?: boolean;
 };
 
-function formatAlbumDate(dateISO: string): string {
+// Reusable "long-press to multi-select" behavior — used for the month grid,
+// the day grid, and the item grid, since all three need identical
+// active/selected/enter/toggle/exit/selectAll logic
+function useMultiSelect() {
+  const [active, setActive] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  return {
+    active,
+    selected,
+    enter: (id: string) => {
+      setActive(true);
+      setSelected(new Set([id]));
+    },
+    toggle: (id: string) =>
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      }),
+    exit: () => {
+      setActive(false);
+      setSelected(new Set());
+    },
+    selectAll: (ids: string[]) => setSelected(new Set(ids)),
+  };
+}
+
+async function ensureMemoriesDir() {
+  const info = await FileSystem.getInfoAsync(MEMORIES_DIR);
+  if (!info.exists)
+    await FileSystem.makeDirectoryAsync(MEMORIES_DIR, { intermediates: true });
+}
+
+async function copyToAppStorage(
+  sourceUri: string,
+  id: string,
+): Promise<string> {
+  await ensureMemoriesDir();
+  const ext = sourceUri.split(".").pop()?.split("?")[0] || "jpg";
+  const destUri = `${MEMORIES_DIR}${id}.${ext}`;
+  try {
+    await FileSystem.copyAsync({ from: sourceUri, to: destUri });
+    return destUri;
+  } catch {
+    return sourceUri;
+  }
+}
+
+async function deleteFromAppStorage(uri: string) {
+  if (!uri.startsWith(MEMORIES_DIR)) return;
+  try {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+  } catch {}
+}
+
+function formatDayLabel(dateISO: string): string {
   if (dateISO === TODAY) return "Today";
   const [y, m, d] = dateISO.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatMonthLabel(monthKey: string): string {
+  const [y, m] = monthKey.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-US", {
+    month: "long",
     year: "numeric",
   });
 }
@@ -141,12 +211,43 @@ function VideoPage({ uri }: { uri: string }) {
   );
 }
 
+function AnimatedHeartButton({
+  favorite,
+  onPress,
+}: {
+  favorite?: boolean;
+  onPress: () => void;
+}) {
+  const scale = useSharedValue(1);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+  const handlePress = () => {
+    scale.value = withSpring(1.4, { damping: 4 }, () => {
+      scale.value = withSpring(1);
+    });
+    onPress();
+  };
+  return (
+    <Pressable onPress={handlePress} style={styles.iconButton}>
+      <Animated.View style={animatedStyle}>
+        <Heart
+          color="#fff"
+          size={20}
+          fill={favorite ? "#e75480" : "transparent"}
+        />
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 export default function MemoriesScreen() {
   const params = useLocalSearchParams<{ date?: string }>();
 
   const [memories, setMemories] = useState<Memory[]>([]);
   const [covers, setCovers] = useState<Record<string, string>>({});
-  const [openAlbum, setOpenAlbum] = useState<string | null>(null);
+  const [openMonth, setOpenMonth] = useState<string | null>(null); // "YYYY-MM"
+  const [openAlbum, setOpenAlbum] = useState<string | null>(null); // "YYYY-MM-DD" or FAVORITES_ALBUM
   const [yearFilter, setYearFilter] = useState<string | null>(null);
   const [filterVisible, setFilterVisible] = useState(false);
 
@@ -155,14 +256,10 @@ export default function MemoriesScreen() {
   const [captionDraft, setCaptionDraft] = useState("");
   const [editingCaption, setEditingCaption] = useState(false);
 
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [moveModalVisible, setMoveModalVisible] = useState(false);
-
-  const [folderSelectionMode, setFolderSelectionMode] = useState(false);
-  const [selectedFolders, setSelectedFolders] = useState<Set<string>>(
-    new Set(),
-  );
+  const monthSelection = useMultiSelect();
+  const daySelection = useMultiSelect();
+  const itemSelection = useMultiSelect();
 
   useEffect(() => {
     AsyncStorage.getItem(MEMORIES_KEY).then((saved) => {
@@ -183,7 +280,10 @@ export default function MemoriesScreen() {
   }, []);
 
   useEffect(() => {
-    if (params.date) setOpenAlbum(params.date);
+    if (params.date) {
+      setOpenMonth(params.date.slice(0, 7));
+      setOpenAlbum(params.date);
+    }
   }, [params.date]);
 
   const saveMemories = async (updated: Memory[]) => {
@@ -217,50 +317,85 @@ export default function MemoriesScreen() {
 
     const targetDate =
       openAlbum && openAlbum !== FAVORITES_ALBUM ? openAlbum : TODAY;
-    const newOnes: Memory[] = result.assets.map((a) => ({
-      id: `${Date.now()}-${a.assetId ?? Math.random()}`,
-      uri: a.uri,
-      type: a.type === "video" ? "video" : "image",
-      date: targetDate,
-    }));
+    const newOnes: Memory[] = [];
+    for (const a of result.assets) {
+      const id = `${Date.now()}-${a.assetId ?? Math.random()}`;
+      const storedUri = await copyToAppStorage(a.uri, id);
+      newOnes.push({
+        id,
+        uri: storedUri,
+        type: a.type === "video" ? "video" : "image",
+        date: targetDate,
+      });
+    }
     await saveMemories([...newOnes, ...memories]);
-    if (!openAlbum) setOpenAlbum(targetDate);
+    if (!openAlbum) {
+      setOpenMonth(targetDate.slice(0, 7));
+      setOpenAlbum(targetDate);
+    }
   };
 
-  const sections = useMemo(() => {
+  // Day-level groups, oldest first
+  const daySections = useMemo(() => {
     const map: Record<string, Memory[]> = {};
     memories.forEach((m) => {
       (map[m.date] ??= []).push(m);
     });
     return Object.entries(map)
-      .sort(([a], [b]) => (a < b ? 1 : -1))
+      .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([date, items]) => ({ date, items }));
   }, [memories]);
 
+  // Month-level groups, built from day groups so ordering is preserved, oldest first
+  const monthSections = useMemo(() => {
+    const map: Record<string, { date: string; items: Memory[] }[]> = {};
+    daySections.forEach((day) => {
+      const monthKey = day.date.slice(0, 7);
+      (map[monthKey] ??= []).push(day);
+    });
+    return Object.entries(map)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([month, days]) => ({
+        month,
+        days,
+        itemCount: days.reduce((sum, d) => sum + d.items.length, 0),
+        coverUri: days[0].items[0]?.uri,
+      }));
+  }, [daySections]);
+
   const availableYears = useMemo(
     () =>
-      Array.from(new Set(sections.map((s) => s.date.slice(0, 4))))
+      Array.from(new Set(monthSections.map((s) => s.month.slice(0, 4))))
         .sort()
         .reverse(),
-    [sections],
+    [monthSections],
   );
 
-  const visibleSections = yearFilter
-    ? sections.filter((s) => s.date.startsWith(yearFilter))
-    : sections;
+  const visibleMonths = yearFilter
+    ? monthSections.filter((s) => s.month.startsWith(yearFilter))
+    : monthSections;
+  const daysInOpenMonth = openMonth
+    ? (monthSections.find((s) => s.month === openMonth)?.days ?? [])
+    : [];
   const favorites = useMemo(
     () => memories.filter((m) => m.favorite),
     [memories],
   );
 
-  const currentAlbumItems =
-    openAlbum === FAVORITES_ALBUM
-      ? favorites
-      : openAlbum
-        ? (sections.find((s) => s.date === openAlbum)?.items ?? [])
-        : [];
+  // Sorted by when each item was actually added (its id embeds a timestamp)
+  const currentAlbumItems = useMemo(() => {
+    const raw =
+      openAlbum === FAVORITES_ALBUM
+        ? favorites
+        : openAlbum
+          ? (daySections.find((s) => s.date === openAlbum)?.items ?? [])
+          : [];
+    return [...raw].sort(
+      (a, b) => Number(a.id.split("-")[0]) - Number(b.id.split("-")[0]),
+    );
+  }, [openAlbum, favorites, daySections]);
 
-  // ---------- viewer (swipeable) ----------
+  // ---------- viewer ----------
   const openViewer = (list: Memory[], index: number) => {
     setViewerList(list);
     setViewerIndex(index);
@@ -269,13 +404,10 @@ export default function MemoriesScreen() {
     setViewerList(null);
     setEditingCaption(false);
   };
-
   const currentViewerItem = viewerList?.[viewerIndex] ?? null;
 
-  const updateMemory = (id: string, patch: Partial<Memory>) => {
-    const updated = memories.map((m) => (m.id === id ? { ...m, ...patch } : m));
-    saveMemories(updated);
-  };
+  const updateMemory = (id: string, patch: Partial<Memory>) =>
+    saveMemories(memories.map((m) => (m.id === id ? { ...m, ...patch } : m)));
 
   const toggleFavorite = (item: Memory) =>
     updateMemory(item.id, { favorite: !item.favorite });
@@ -293,6 +425,7 @@ export default function MemoriesScreen() {
         text: "Remove",
         style: "destructive",
         onPress: async () => {
+          await deleteFromAppStorage(item.uri);
           await saveMemories(memories.filter((m) => m.id !== item.id));
           closeViewer();
         },
@@ -305,33 +438,18 @@ export default function MemoriesScreen() {
     saveCovers({ ...covers, [openAlbum]: item.id });
   };
 
-  // ---------- item selection (inside an album) ----------
-  const toggleSelect = (id: string) =>
-    setSelectedIds((p) => {
-      const n = new Set(p);
-      n.has(id) ? n.delete(id) : n.add(id);
-      return n;
-    });
+  // ---------- item selection (inside a day) ----------
   const handleItemPress = (item: Memory, index: number) =>
-    selectionMode
-      ? toggleSelect(item.id)
+    itemSelection.active
+      ? itemSelection.toggle(item.id)
       : openViewer(currentAlbumItems, index);
   const handleItemLongPress = (item: Memory) => {
-    if (!selectionMode) {
-      setSelectionMode(true);
-      setSelectedIds(new Set([item.id]));
-    }
+    if (!itemSelection.active) itemSelection.enter(item.id);
   };
-  const exitSelectionMode = () => {
-    setSelectionMode(false);
-    setSelectedIds(new Set());
-  };
-  const selectAll = () =>
-    setSelectedIds(new Set(currentAlbumItems.map((m) => m.id)));
 
-  const handleRemoveSelected = () => {
+  const handleRemoveSelectedItems = () => {
     Alert.alert(
-      `Remove ${selectedIds.size} item${selectedIds.size === 1 ? "" : "s"}?`,
+      `Remove ${itemSelection.selected.size} item${itemSelection.selected.size === 1 ? "" : "s"}?`,
       "This can't be undone.",
       [
         { text: "Cancel", style: "cancel" },
@@ -339,67 +457,97 @@ export default function MemoriesScreen() {
           text: "Remove",
           style: "destructive",
           onPress: async () => {
-            await saveMemories(memories.filter((m) => !selectedIds.has(m.id)));
-            exitSelectionMode();
+            const toDelete = memories.filter((m) =>
+              itemSelection.selected.has(m.id),
+            );
+            await Promise.all(toDelete.map((m) => deleteFromAppStorage(m.uri)));
+            await saveMemories(
+              memories.filter((m) => !itemSelection.selected.has(m.id)),
+            );
+            itemSelection.exit();
           },
         },
       ],
     );
   };
-  const handleMoveSelected = async (targetDate: string) => {
+  const handleMoveSelectedItems = async (targetDate: string) => {
     await saveMemories(
       memories.map((m) =>
-        selectedIds.has(m.id) ? { ...m, date: targetDate } : m,
+        itemSelection.selected.has(m.id) ? { ...m, date: targetDate } : m,
       ),
     );
     setMoveModalVisible(false);
-    exitSelectionMode();
+    itemSelection.exit();
   };
 
+  // Back from item grid: Favorites goes straight to top; a normal day goes
+  // back to the day-list within its month (openMonth stays set)
   const closeAlbum = () => {
-    exitSelectionMode();
+    itemSelection.exit();
     setOpenAlbum(null);
   };
 
-  // ---------- folder selection (top-level grid) ----------
-  const toggleFolderSelect = (date: string) =>
-    setSelectedFolders((p) => {
-      const n = new Set(p);
-      n.has(date) ? n.delete(date) : n.add(date);
-      return n;
-    });
-  const handleFolderPress = (date: string) =>
-    folderSelectionMode ? toggleFolderSelect(date) : setOpenAlbum(date);
-  const handleFolderLongPress = (date: string) => {
-    if (!folderSelectionMode) {
-      setFolderSelectionMode(true);
-      setSelectedFolders(new Set([date]));
-    }
+  // ---------- day selection (inside a month) ----------
+  const handleDayPress = (date: string) =>
+    daySelection.active ? daySelection.toggle(date) : setOpenAlbum(date);
+  const handleDayLongPress = (date: string) => {
+    if (!daySelection.active) daySelection.enter(date);
   };
-  const exitFolderSelectionMode = () => {
-    setFolderSelectionMode(false);
-    setSelectedFolders(new Set());
-  };
-  const selectAllFolders = () =>
-    setSelectedFolders(new Set(visibleSections.map((s) => s.date)));
 
-  const handleRemoveFolders = () => {
-    const count = sections
-      .filter((s) => selectedFolders.has(s.date))
-      .reduce((sum, s) => sum + s.items.length, 0);
+  const handleRemoveSelectedDays = () => {
+    const toDelete = memories.filter((m) => daySelection.selected.has(m.date));
     Alert.alert(
-      `Delete ${selectedFolders.size} album${selectedFolders.size === 1 ? "" : "s"}?`,
-      `Removes ${count} item${count === 1 ? "" : "s"} inside. Can't be undone.`,
+      `Delete ${daySelection.selected.size} day${daySelection.selected.size === 1 ? "" : "s"}?`,
+      `Removes ${toDelete.length} item${toDelete.length === 1 ? "" : "s"} inside. Can't be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
+            await Promise.all(toDelete.map((m) => deleteFromAppStorage(m.uri)));
             await saveMemories(
-              memories.filter((m) => !selectedFolders.has(m.date)),
+              memories.filter((m) => !daySelection.selected.has(m.date)),
             );
-            exitFolderSelectionMode();
+            daySelection.exit();
+          },
+        },
+      ],
+    );
+  };
+
+  const closeMonth = () => {
+    daySelection.exit();
+    setOpenMonth(null);
+  };
+
+  // ---------- month selection (top level) ----------
+  const handleMonthPress = (month: string) =>
+    monthSelection.active ? monthSelection.toggle(month) : setOpenMonth(month);
+  const handleMonthLongPress = (month: string) => {
+    if (!monthSelection.active) monthSelection.enter(month);
+  };
+
+  const handleRemoveSelectedMonths = () => {
+    const toDelete = memories.filter((m) =>
+      monthSelection.selected.has(m.date.slice(0, 7)),
+    );
+    Alert.alert(
+      `Delete ${monthSelection.selected.size} month${monthSelection.selected.size === 1 ? "" : "s"}?`,
+      `Removes ${toDelete.length} item${toDelete.length === 1 ? "" : "s"} inside. Can't be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            await Promise.all(toDelete.map((m) => deleteFromAppStorage(m.uri)));
+            await saveMemories(
+              memories.filter(
+                (m) => !monthSelection.selected.has(m.date.slice(0, 7)),
+              ),
+            );
+            monthSelection.exit();
           },
         },
       ],
@@ -408,22 +556,27 @@ export default function MemoriesScreen() {
 
   const goToCalendarDate = (date: string) =>
     router.push({ pathname: "/calendar", params: { date } });
-
-  const folderCoverUri = (date: string, items: Memory[]) =>
+  const dayCoverUri = (date: string, items: Memory[]) =>
     items.find((i) => i.id === covers[date])?.uri ?? items[0].uri;
 
-  // ---------- Folder list ----------
-  if (!openAlbum) {
+  // ================= LEVEL 0: Month grid =================
+  if (!openMonth && !openAlbum) {
     return (
       <ScreenContainer contentContainerStyle={{ gap: 16 }}>
-        {folderSelectionMode ? (
+        {monthSelection.active ? (
           <View style={styles.headerRow}>
-            <Text style={styles.title}>{selectedFolders.size} selected</Text>
+            <Text style={styles.title}>
+              {monthSelection.selected.size} selected
+            </Text>
             <View style={styles.selectionActions}>
-              <Pressable onPress={selectAllFolders}>
+              <Pressable
+                onPress={() =>
+                  monthSelection.selectAll(visibleMonths.map((s) => s.month))
+                }
+              >
                 <Text style={styles.headerLink}>Select all</Text>
               </Pressable>
-              <Pressable onPress={exitFolderSelectionMode}>
+              <Pressable onPress={monthSelection.exit}>
                 <Text style={styles.headerLinkMuted}>Cancel</Text>
               </Pressable>
             </View>
@@ -444,15 +597,16 @@ export default function MemoriesScreen() {
           </View>
         )}
 
-        {folderSelectionMode && (
+        {monthSelection.active && (
           <View style={styles.selectionBar}>
             <Pressable
               style={[
                 styles.selectionBarButton,
-                selectedFolders.size === 0 && styles.selectionBarButtonDisabled,
+                monthSelection.selected.size === 0 &&
+                  styles.selectionBarButtonDisabled,
               ]}
-              disabled={selectedFolders.size === 0}
-              onPress={handleRemoveFolders}
+              disabled={monthSelection.selected.size === 0}
+              onPress={handleRemoveSelectedMonths}
             >
               <Text
                 style={[styles.selectionBarButtonText, { color: "#d9534f" }]}
@@ -463,7 +617,7 @@ export default function MemoriesScreen() {
           </View>
         )}
 
-        {sections.length === 0 ? (
+        {monthSections.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>No memories yet</Text>
             <Text style={styles.emptyHint}>
@@ -472,7 +626,7 @@ export default function MemoriesScreen() {
           </View>
         ) : (
           <View style={styles.folderGrid}>
-            {favorites.length > 0 && !folderSelectionMode && (
+            {favorites.length > 0 && !monthSelection.active && (
               <Pressable
                 style={styles.folderTile}
                 onPress={() => setOpenAlbum(FAVORITES_ALBUM)}
@@ -492,25 +646,23 @@ export default function MemoriesScreen() {
                 </Text>
               </Pressable>
             )}
-            {visibleSections.map((section) => {
-              const isSelected = selectedFolders.has(section.date);
+            {visibleMonths.map((section) => {
+              const isSelected = monthSelection.selected.has(section.month);
               return (
                 <Pressable
-                  key={section.date}
+                  key={section.month}
                   style={styles.folderTile}
-                  onPress={() => handleFolderPress(section.date)}
-                  onLongPress={() => handleFolderLongPress(section.date)}
+                  onPress={() => handleMonthPress(section.month)}
+                  onLongPress={() => handleMonthLongPress(section.month)}
                 >
                   <View>
                     <Image
-                      source={{
-                        uri: folderCoverUri(section.date, section.items),
-                      }}
+                      source={{ uri: section.coverUri }}
                       style={styles.folderCover}
                       contentFit="cover"
                       cachePolicy="memory-disk"
                     />
-                    {folderSelectionMode && (
+                    {monthSelection.active && (
                       <View
                         style={[
                           styles.selectOverlay,
@@ -529,11 +681,10 @@ export default function MemoriesScreen() {
                     )}
                   </View>
                   <Text style={styles.folderLabel}>
-                    {formatAlbumDate(section.date)}
+                    {formatMonthLabel(section.month)}
                   </Text>
                   <Text style={styles.folderCount}>
-                    {section.items.length} item
-                    {section.items.length === 1 ? "" : "s"}
+                    {section.itemCount} item{section.itemCount === 1 ? "" : "s"}
                   </Text>
                 </Pressable>
               );
@@ -606,20 +757,142 @@ export default function MemoriesScreen() {
     );
   }
 
-  // ---------- Inside an album ----------
+  // ================= LEVEL 1: Day grid within a month =================
+  if (openMonth && !openAlbum) {
+    return (
+      <ScreenContainer contentContainerStyle={{ gap: 16 }}>
+        {daySelection.active ? (
+          <View style={styles.headerRow}>
+            <Text style={styles.title}>
+              {daySelection.selected.size} selected
+            </Text>
+            <View style={styles.selectionActions}>
+              <Pressable
+                onPress={() =>
+                  daySelection.selectAll(daysInOpenMonth.map((d) => d.date))
+                }
+              >
+                <Text style={styles.headerLink}>Select all</Text>
+              </Pressable>
+              <Pressable onPress={daySelection.exit}>
+                <Text style={styles.headerLinkMuted}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.headerRow}>
+            <Pressable style={styles.backRow} onPress={closeMonth}>
+              <ChevronLeft color="#e75480" size={22} />
+              <Text style={styles.title}>{formatMonthLabel(openMonth)}</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {daySelection.active && (
+          <View style={styles.selectionBar}>
+            <Pressable
+              style={[
+                styles.selectionBarButton,
+                daySelection.selected.size === 0 &&
+                  styles.selectionBarButtonDisabled,
+              ]}
+              disabled={daySelection.selected.size === 0}
+              onPress={handleRemoveSelectedDays}
+            >
+              <Text
+                style={[styles.selectionBarButtonText, { color: "#d9534f" }]}
+              >
+                Delete
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
+        <View style={styles.folderGrid}>
+          {daysInOpenMonth.map((day) => {
+            const isSelected = daySelection.selected.has(day.date);
+            return (
+              <Pressable
+                key={day.date}
+                style={styles.folderTile}
+                onPress={() => handleDayPress(day.date)}
+                onLongPress={() => handleDayLongPress(day.date)}
+              >
+                <View>
+                  <Image
+                    source={{ uri: dayCoverUri(day.date, day.items) }}
+                    style={styles.folderCover}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                  />
+                  {daySelection.active && (
+                    <View
+                      style={[
+                        styles.selectOverlay,
+                        isSelected && styles.selectOverlayActive,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.checkCircle,
+                          isSelected && styles.checkCircleActive,
+                        ]}
+                      >
+                        {isSelected && <Check color="#fff" size={14} />}
+                      </View>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.folderLabel}>
+                  {formatDayLabel(day.date)}
+                </Text>
+                <Text style={styles.folderCount}>
+                  {day.items.length} item{day.items.length === 1 ? "" : "s"}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <MediaViewer
+          list={viewerList}
+          index={viewerIndex}
+          onIndexChange={setViewerIndex}
+          onClose={closeViewer}
+          onToggleFavorite={toggleFavorite}
+          onRemove={removeFromViewer}
+          captionDraft={captionDraft}
+          setCaptionDraft={setCaptionDraft}
+          editingCaption={editingCaption}
+          setEditingCaption={setEditingCaption}
+          onSaveCaption={saveCaption}
+          canSetCover={false}
+          onSetCover={() => {}}
+        />
+      </ScreenContainer>
+    );
+  }
+
+  // ================= LEVEL 2: Items inside a day (or Favorites) =================
   const albumTitle =
-    openAlbum === FAVORITES_ALBUM ? "Favorites" : formatAlbumDate(openAlbum);
+    openAlbum === FAVORITES_ALBUM ? "Favorites" : formatDayLabel(openAlbum!);
 
   return (
     <ScreenContainer contentContainerStyle={{ gap: 16 }}>
-      {selectionMode ? (
+      {itemSelection.active ? (
         <View style={styles.headerRow}>
-          <Text style={styles.title}>{selectedIds.size} selected</Text>
+          <Text style={styles.title}>
+            {itemSelection.selected.size} selected
+          </Text>
           <View style={styles.selectionActions}>
-            <Pressable onPress={selectAll}>
+            <Pressable
+              onPress={() =>
+                itemSelection.selectAll(currentAlbumItems.map((m) => m.id))
+              }
+            >
               <Text style={styles.headerLink}>Select all</Text>
             </Pressable>
-            <Pressable onPress={exitSelectionMode}>
+            <Pressable onPress={itemSelection.exit}>
               <Text style={styles.headerLinkMuted}>Cancel</Text>
             </Pressable>
           </View>
@@ -632,7 +905,7 @@ export default function MemoriesScreen() {
           </Pressable>
           <View style={styles.headerButtons}>
             {openAlbum !== FAVORITES_ALBUM && (
-              <Pressable onPress={() => goToCalendarDate(openAlbum)}>
+              <Pressable onPress={() => goToCalendarDate(openAlbum!)}>
                 <Text style={styles.headerLink}>View in Calendar</Text>
               </Pressable>
             )}
@@ -651,7 +924,7 @@ export default function MemoriesScreen() {
         </View>
       )}
 
-      {isFutureAlbum && !selectionMode && (
+      {isFutureAlbum && !itemSelection.active && (
         <View style={styles.futureNotice}>
           <Text style={styles.futureNoticeText}>
             This day hasn't happened yet — you'll be able to add memories once
@@ -660,14 +933,15 @@ export default function MemoriesScreen() {
         </View>
       )}
 
-      {selectionMode && (
+      {itemSelection.active && (
         <View style={styles.selectionBar}>
           <Pressable
             style={[
               styles.selectionBarButton,
-              selectedIds.size === 0 && styles.selectionBarButtonDisabled,
+              itemSelection.selected.size === 0 &&
+                styles.selectionBarButtonDisabled,
             ]}
-            disabled={selectedIds.size === 0}
+            disabled={itemSelection.selected.size === 0}
             onPress={() => setMoveModalVisible(true)}
           >
             <Text style={styles.selectionBarButtonText}>Move</Text>
@@ -675,10 +949,11 @@ export default function MemoriesScreen() {
           <Pressable
             style={[
               styles.selectionBarButton,
-              selectedIds.size === 0 && styles.selectionBarButtonDisabled,
+              itemSelection.selected.size === 0 &&
+                styles.selectionBarButtonDisabled,
             ]}
-            disabled={selectedIds.size === 0}
-            onPress={handleRemoveSelected}
+            disabled={itemSelection.selected.size === 0}
+            onPress={handleRemoveSelectedItems}
           >
             <Text style={[styles.selectionBarButtonText, { color: "#d9534f" }]}>
               Remove
@@ -697,7 +972,7 @@ export default function MemoriesScreen() {
         removeClippedSubviews
         initialNumToRender={12}
         renderItem={({ item, index }) => {
-          const isSelected = selectedIds.has(item.id);
+          const isSelected = itemSelection.selected.has(item.id);
           return (
             <Pressable
               onPress={() => handleItemPress(item, index)}
@@ -710,17 +985,17 @@ export default function MemoriesScreen() {
                   contentFit="cover"
                   cachePolicy="memory-disk"
                 />
-                {item.favorite && !selectionMode && (
+                {item.favorite && !itemSelection.active && (
                   <View style={styles.favoriteCorner}>
                     <Heart color="#fff" size={12} fill="#fff" />
                   </View>
                 )}
-                {item.type === "video" && !selectionMode && (
+                {item.type === "video" && !itemSelection.active && (
                   <View style={styles.playOverlay}>
                     <Play color="#fff" size={20} fill="#fff" />
                   </View>
                 )}
-                {selectionMode && (
+                {itemSelection.active && (
                   <View
                     style={[
                       styles.selectOverlay,
@@ -770,17 +1045,17 @@ export default function MemoriesScreen() {
           onPress={() => setMoveModalVisible(false)}
         >
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>Move to album</Text>
-            {sections
+            <Text style={styles.sheetTitle}>Move to day</Text>
+            {daySections
               .filter((s) => s.date !== openAlbum)
               .map((section) => (
                 <Pressable
                   key={section.date}
                   style={styles.albumOption}
-                  onPress={() => handleMoveSelected(section.date)}
+                  onPress={() => handleMoveSelectedItems(section.date)}
                 >
                   <Text style={styles.albumOptionText}>
-                    {formatAlbumDate(section.date)}
+                    {formatDayLabel(section.date)}
                   </Text>
                 </Pressable>
               ))}
@@ -880,16 +1155,10 @@ function MediaViewer({
 
         {current && (
           <View style={styles.viewerTopRight}>
-            <Pressable
+            <AnimatedHeartButton
+              favorite={current.favorite}
               onPress={() => onToggleFavorite(current)}
-              style={styles.iconButton}
-            >
-              <Heart
-                color="#fff"
-                size={20}
-                fill={current.favorite ? "#e75480" : "transparent"}
-              />
-            </Pressable>
+            />
             {canSetCover && (
               <Pressable
                 onPress={() => onSetCover(current)}

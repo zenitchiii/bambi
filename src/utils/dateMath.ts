@@ -43,7 +43,7 @@ export function getAge(birthISO: string) {
 export function getMonthsaryOccurrences(
   anniversaryISO: string,
   monthsBack = 0,
-  monthsForward = 18,
+  monthsForward = 60, // 5 years
 ): string[] {
   const [year, month, day] = anniversaryISO.split("-").map(Number);
   const now = new Date();
@@ -62,7 +62,7 @@ export function getMonthsaryOccurrences(
 export function getYearlyOccurrences(
   dateISO: string,
   yearsBack = 0,
-  yearsForward = 2,
+  yearsForward = 5, // 5 years
 ): string[] {
   const [origYear, month, day] = dateISO.split("-").map(Number);
   const currentYear = new Date().getFullYear();

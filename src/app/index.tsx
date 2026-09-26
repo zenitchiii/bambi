@@ -36,6 +36,12 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      AsyncStorage.getItem(DATE_NIGHT_STORAGE_KEY).then((saved) => {
+        setDateNight(saved ?? null);
+      });
+      AsyncStorage.getItem(CUSTOM_EVENTS_STORAGE_KEY).then((saved) => {
+        setCustomEvents(saved ? JSON.parse(saved) : {});
+      });
       AsyncStorage.getItem(MEMORIES_KEY).then((saved) => {
         if (!saved) return setOnThisDay([]);
         const all = JSON.parse(saved);
