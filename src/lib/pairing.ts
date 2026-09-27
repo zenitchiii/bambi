@@ -1,16 +1,46 @@
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
 import {
-    doc,
-    getDoc,
-    onSnapshot,
-    serverTimestamp,
-    setDoc,
-    updateDoc,
+  doc,
+  getDoc,
+  onSnapshot,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
 } from "firebase/firestore";
 
 const COUPLE_ID_KEY = "coupleId";
 
+export type SharedCoupleData = {
+  dateNight: string | null;
+  notes: Record<string, string>;
+  customEvents: Record<string, string>;
+  lastPoke: number | null;
+};
+
+const DEFAULT_SHARED_DATA: SharedCoupleData = {
+  dateNight: null,
+  notes: {},
+  customEvents: {},
+  lastPoke: null,
+};
+
+export async function updateSharedData(
+  coupleId: string,
+  updates: Partial<SharedCoupleData>,
+) {
+  await setDoc(doc(db, "couples", coupleId), updates, { merge: true });
+}
+
+export function watchSharedData(
+  coupleId: string,
+  onUpdate: (data: SharedCoupleData) => void,
+) {
+  return onSnapshot(doc(db, "couples", coupleId), (snap) => {
+    if (!snap.exists()) return;
+    onUpdate({ ...DEFAULT_SHARED_DATA, ...snap.data() });
+  });
+}
 // Signs this device in anonymously if it isn't already, and resolves once
 // we have a stable Firebase UID to work with
 export function ensureSignedIn(): Promise<string> {
@@ -69,3 +99,10 @@ export function watchCouple(code: string, onUpdate: (data: any) => void) {
 
 export { COUPLE_ID_KEY };
 
+export async function isMemberA(
+  coupleId: string,
+  uid: string,
+): Promise<boolean> {
+  const snap = await getDoc(doc(db, "couples", coupleId));
+  return snap.exists() && snap.data().memberA === uid;
+}

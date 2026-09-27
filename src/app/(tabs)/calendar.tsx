@@ -1,10 +1,7 @@
 import ScreenContainer from "@/components/ScreenContainer";
-import {
-  ANNIVERSARY_DATE,
-  APP_START_DATE,
-  PARTNER_BIRTHDAY,
-  YOUR_BIRTHDAY,
-} from "@/constants/date";
+import { APP_START_DATE, PARTNER_BIRTHDAY } from "@/constants/date";
+import { useProfile } from "@/context/ProfileContext";
+import { useSharedCoupleData } from "@/hooks/useSharedCoupleData";
 import {
   daysUntil,
   formatDateISO,
@@ -12,7 +9,6 @@ import {
   getYearlyOccurrences,
   getYearlyOccurrencesFromMonthDay,
 } from "@/utils/dateMath";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import Holidays from "date-holidays";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -30,9 +26,6 @@ import {
 import { CalendarList, DateData } from "react-native-calendars";
 
 const hd = new Holidays("PH");
-const DATE_NIGHT_KEY = "nextDateNight";
-const NOTES_KEY = "dateNotes";
-const EVENTS_KEY = "customEvents";
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const [START_YEAR, START_MONTH] = APP_START_DATE.split("-").map(Number);
 const TODAY = formatDateISO(new Date());
@@ -49,7 +42,6 @@ function getOrdinal(n: number): string {
 
 type ModalMode = "options" | "note" | "event";
 
-// Shared display for "note" and "custom event" — same shape, different data
 function EditableEntry({
   label,
   content,
@@ -134,9 +126,9 @@ function FieldEditor({
 
 export default function CalendarScreen() {
   const calendarRef = useRef<any>(null);
-  const [dateNight, setDateNight] = useState<string | null>(null);
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  const [events, setEvents] = useState<Record<string, string>>({});
+  const { profile } = useProfile();
+  const { data: shared, update: updateShared } = useSharedCoupleData();
+  const { dateNight, notes, customEvents: events } = shared;
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [optionsVisible, setOptionsVisible] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>("options");
@@ -147,19 +139,6 @@ export default function CalendarScreen() {
   const [pickerYear, setPickerYear] = useState(START_YEAR);
   const [calendarKey, setCalendarKey] = useState(0);
   const params = useLocalSearchParams<{ date?: string }>();
-
-  useEffect(() => {
-    Promise.all([
-      AsyncStorage.getItem(DATE_NIGHT_KEY),
-      AsyncStorage.getItem(NOTES_KEY),
-      AsyncStorage.getItem(EVENTS_KEY),
-    ]).then(([dn, n, e]) => {
-      if (dn) setDateNight(dn);
-      if (n) setNotes(JSON.parse(n));
-      if (e) setEvents(JSON.parse(e));
-    });
-  }, []);
-
   const isDateNight = selectedDate === dateNight && selectedDate !== null;
   const existingNote = selectedDate ? notes[selectedDate] : undefined;
   const monthDay = selectedDate?.slice(5) ?? null;
@@ -176,10 +155,14 @@ export default function CalendarScreen() {
   }, [selectedDate]);
 
   const dateLabels = useMemo(() => {
-    if (!selectedDate) return [];
+    if (!selectedDate || !profile) return [];
     const [yearStr, monthStr, dayStr] = selectedDate.split("-");
-    const [annYearStr, annMonthStr, annDayStr] = ANNIVERSARY_DATE.split("-");
-    const [, yourMonthStr, yourDayStr] = YOUR_BIRTHDAY.split("-");
+    const [annYearStr, annMonthStr, annDayStr] = formatDateISO(
+      new Date(profile.anniversary),
+    ).split("-");
+    const [, yourMonthStr, yourDayStr] = formatDateISO(
+      new Date(profile.birthday),
+    ).split("-");
     const [, partnerMonthStr, partnerDayStr] = PARTNER_BIRTHDAY.split("-");
     const labels: string[] = [];
 
@@ -200,7 +183,7 @@ export default function CalendarScreen() {
     if (monthStr === partnerMonthStr && dayStr === partnerDayStr)
       labels.push("Her birthday");
     return labels;
-  }, [selectedDate]);
+  }, [selectedDate, profile]);
 
   const sortedNotes = useMemo(
     () =>
@@ -243,51 +226,39 @@ export default function CalendarScreen() {
   };
   const closeOptions = () => setOptionsVisible(false);
 
-  const persist = async (key: string, value: any) =>
-    AsyncStorage.setItem(
-      key,
-      typeof value === "string" ? value : JSON.stringify(value),
-    );
-
-  const setAndSave = <T,>(setter: (v: T) => void, key: string, value: T) => {
-    setter(value);
-    persist(key, value);
-  };
-
   const handleSetDateNight = () => {
     if (!selectedDate) return;
-    setAndSave(setDateNight, DATE_NIGHT_KEY, selectedDate);
+    updateShared({ dateNight: selectedDate });
     closeOptions();
   };
-  const handleRemoveDateNight = async () => {
-    setDateNight(null);
-    await AsyncStorage.removeItem(DATE_NIGHT_KEY);
+  const handleRemoveDateNight = () => {
+    updateShared({ dateNight: null });
     closeOptions();
   };
 
   const handleSaveNote = () => {
     if (!selectedDate) return;
-    setAndSave(setNotes, NOTES_KEY, { ...notes, [selectedDate]: noteDraft });
+    updateShared({ notes: { ...notes, [selectedDate]: noteDraft } });
     closeOptions();
   };
   const handleRemoveNote = () => {
     if (!selectedDate) return;
     const updated = { ...notes };
     delete updated[selectedDate];
-    setAndSave(setNotes, NOTES_KEY, updated);
+    updateShared({ notes: updated });
     closeOptions();
   };
 
   const handleSaveEvent = () => {
     if (!monthDay) return;
-    setAndSave(setEvents, EVENTS_KEY, { ...events, [monthDay]: eventDraft });
+    updateShared({ customEvents: { ...events, [monthDay]: eventDraft } });
     closeOptions();
   };
   const handleRemoveEvent = () => {
     if (!monthDay) return;
     const updated = { ...events };
     delete updated[monthDay];
-    setAndSave(setEvents, EVENTS_KEY, updated);
+    updateShared({ customEvents: updated });
     closeOptions();
   };
 
@@ -317,15 +288,19 @@ export default function CalendarScreen() {
         addDot(h.date.split(" ")[0], `holiday-${h.name}`, "#f2b134"),
       );
     }
-    getYearlyOccurrences(YOUR_BIRTHDAY).forEach((d) =>
-      addDot(d, "bday-you", "#8e6bd6"),
-    );
+    if (profile) {
+      getYearlyOccurrences(formatDateISO(new Date(profile.birthday))).forEach(
+        (d) => addDot(d, "bday-you", "#8e6bd6"),
+      );
+    }
     getYearlyOccurrences(PARTNER_BIRTHDAY).forEach((d) =>
       addDot(d, "bday-partner", "#8e6bd6"),
     );
-    getMonthsaryOccurrences(ANNIVERSARY_DATE).forEach((d) =>
-      addDot(d, "anniversary", "#e75480"),
-    );
+    if (profile) {
+      getMonthsaryOccurrences(
+        formatDateISO(new Date(profile.anniversary)),
+      ).forEach((d) => addDot(d, "anniversary", "#e75480"));
+    }
     Object.keys(events).forEach((md) =>
       getYearlyOccurrencesFromMonthDay(md, START_YEAR, 5).forEach((d) =>
         addDot(d, `event-${md}`, "#3aa17e"),
@@ -344,7 +319,7 @@ export default function CalendarScreen() {
       };
     }
     return marks;
-  }, [dateNight, notes, events, selectedDate]);
+  }, [dateNight, notes, events, selectedDate, profile]);
 
   const dateNightCountdown = dateNight ? daysUntil(dateNight) : null;
 

@@ -1,56 +1,33 @@
-import { Tabs } from "expo-router";
-import { Calendar, HelpCircle, Home, Images } from "lucide-react-native";
+import { OnboardingProvider, useOnboarding } from "@/context/OnboardingContext";
+import { ProfileProvider } from "@/context/ProfileContext";
+import { Stack } from "expo-router";
+import { ActivityIndicator, View } from "react-native";
 
-export default function TabLayout() {
+function RootNavigator() {
+  const { status } = useOnboarding();
+
+  if (status === "loading") {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" color="#e75480" />
+      </View>
+    );
+  }
+
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: "#e75480",
-        tabBarInactiveTintColor: "#999",
-        tabBarStyle: {
-          height: 80,
-          paddingBottom: 20,
-          paddingTop: 10,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-        },
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-          headerTitle: "Bambi 🐰",
-          tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="calendar"
-        options={{
-          title: "Calendar",
-          tabBarIcon: ({ color, size }) => (
-            <Calendar color={color} size={size} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="memories"
-        options={{
-          title: "Memories",
-          tabBarIcon: ({ color, size }) => <Images color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="quiz"
-        options={{
-          title: "Quiz",
-          tabBarIcon: ({ color, size }) => (
-            <HelpCircle color={color} size={size} />
-          ),
-        }}
-      />
-    </Tabs>
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" redirect={status !== "onboarded"} />
+      <Stack.Screen name="onboarding" redirect={status === "onboarded"} />
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <OnboardingProvider>
+      <ProfileProvider>
+        <RootNavigator />
+      </ProfileProvider>
+    </OnboardingProvider>
   );
 }
