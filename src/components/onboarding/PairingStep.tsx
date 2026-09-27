@@ -1,4 +1,6 @@
 import { useOnboarding } from "@/context/OnboardingContext";
+import { useProfile } from "@/context/ProfileContext";
+import { db } from "@/lib/firebase";
 import {
   COUPLE_ID_KEY,
   createCoupleCode,
@@ -7,6 +9,7 @@ import {
   watchCouple,
 } from "@/lib/pairing";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -21,6 +24,7 @@ type Mode = "choose" | "host" | "join";
 type Props = { onNext: () => void };
 
 export default function PairingStep({ onNext }: Props) {
+  const { refreshProfile } = useProfile();
   const { refreshStatus } = useOnboarding();
   const [mode, setMode] = useState<Mode>("choose");
   const [code, setCode] = useState("");
@@ -42,8 +46,21 @@ export default function PairingStep({ onNext }: Props) {
   }
 
   async function handleDevSkip() {
+    const uid = await ensureSignedIn();
+    const devCoupleId = `DEV-${uid.slice(0, 8)}`;
+    const coupleRef = doc(db, "couples", devCoupleId);
+    const snap = await getDoc(coupleRef);
+    if (!snap.exists()) {
+      // Step 1: create with memberB still empty — satisfies the rules'
+      // "create" branch, same as real pairing does
+      await setDoc(coupleRef, { memberA: uid, memberB: null });
+    }
+    // Step 2: join as your own memberB — satisfies the rules' separate
+    // "join" branch (memberB was null, now becomes your uid)
+    await setDoc(coupleRef, { memberB: uid }, { merge: true });
     await AsyncStorage.multiSet([
       [COUPLE_ID_KEY, "DEV000"],
+      [COUPLE_ID_KEY, devCoupleId],
       [
         "userProfile",
         JSON.stringify({
@@ -55,6 +72,7 @@ export default function PairingStep({ onNext }: Props) {
       ],
     ]);
     await refreshStatus();
+    await refreshProfile();
   }
 
   async function handleHost() {

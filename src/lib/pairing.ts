@@ -29,6 +29,7 @@ export async function updateSharedData(
   coupleId: string,
   updates: Partial<SharedCoupleData>,
 ) {
+  await ensureSignedIn();
   await setDoc(doc(db, "couples", coupleId), updates, { merge: true });
 }
 

@@ -4,7 +4,7 @@ import { usePartnerProfile } from "@/hooks/usePartnerProfile";
 import { COUPLE_ID_KEY } from "@/lib/pairing";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
-import { Heart, Info, LogOut, User } from "lucide-react-native";
+import { Heart, Info, LogOut, Sparkles, User } from "lucide-react-native";
 import {
   Alert,
   Dimensions,
@@ -24,6 +24,7 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   onEditProfile: () => void;
+  onFutureFeatures: () => void;
   onAbout: () => void;
 };
 
@@ -31,6 +32,7 @@ export default function Sidebar({
   visible,
   onClose,
   onEditProfile,
+  onFutureFeatures,
   onAbout,
 }: Props) {
   const { profile } = useProfile();
@@ -93,13 +95,9 @@ export default function Sidebar({
 
           <Heart color="#e75480" size={20} fill="#e75480" />
           <View style={styles.personColumn}>
-            {partner?.photoURL ? (
-              <Image source={{ uri: partner.photoURL }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                + <User color="#bbb" size={22} />
-              </View>
-            )}
+            <View style={[styles.avatar, styles.avatarPlaceholder]}>
+              <User color="#bbb" size={22} />
+            </View>
             <Text style={styles.personName}>
               {partner?.name ?? "Waiting..."}
             </Text>
@@ -115,6 +113,11 @@ export default function Sidebar({
         <Pressable style={styles.item} onPress={onEditProfile}>
           <User color="#e75480" size={20} />
           <Text style={styles.itemText}>Edit Profile</Text>
+        </Pressable>
+
+        <Pressable style={styles.item} onPress={onFutureFeatures}>
+          <Sparkles color="#e75480" size={20} />
+          <Text style={styles.itemText}>Future Features</Text>
         </Pressable>
 
         <Pressable style={styles.item} onPress={onAbout}>

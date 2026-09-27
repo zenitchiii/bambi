@@ -22,7 +22,6 @@ export default function TabLayout() {
         name="index"
         options={{
           title: "Home",
-          headerTitle: "Bambi 🐰",
           tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
         }}
       />

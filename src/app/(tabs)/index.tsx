@@ -1,9 +1,12 @@
 import AboutModal from "@/components/AboutModal";
 import EditProfileModal from "@/components/EditProfileModal";
+import FutureFeaturesModal from "@/components/FutureFeaturesModal";
+import PhotoSlideshow from "@/components/home/PhotoSlideshow";
 import ScreenContainer from "@/components/ScreenContainer";
 import Sidebar from "@/components/Sidebar";
-import { APP_START_DATE, PARTNER_BIRTHDAY } from "@/constants/date";
+import { APP_START_DATE } from "@/constants/date";
 import { useProfile } from "@/context/ProfileContext";
+import { usePartnerProfile } from "@/hooks/usePartnerProfile";
 import { useSharedCoupleData } from "@/hooks/useSharedCoupleData";
 import {
   daysUntil,
@@ -16,10 +19,18 @@ import {
 } from "@/utils/dateMath";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "expo-router";
 import { CalendarHeart, HandHeart, Heart } from "lucide-react-native";
 import { useCallback, useRef, useState } from "react";
-import { PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Dimensions,
+  PanResponder,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -31,8 +42,11 @@ const MEMORIES_KEY = "memories";
 const UPCOMING_WINDOW_DAYS = 30;
 const [START_YEAR] = APP_START_DATE.split("-").map(Number);
 
+const HERO_HEIGHT = Dimensions.get("window").width;
+
 export default function HomeScreen() {
   const { profile } = useProfile();
+  const partner = usePartnerProfile();
 
   const { data: shared, update: updateShared } = useSharedCoupleData();
   const { dateNight, customEvents, lastPoke } = shared;
@@ -42,18 +56,16 @@ export default function HomeScreen() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [futureFeaturesOpen, setFutureFeaturesOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
 
-  // Only treat it as a sidebar-open gesture if it starts near the left edge
-  // and moves mostly horizontally — otherwise it'd fight the ScrollView's
-  // own vertical scroll gesture inside ScreenContainer
   const edgeSwipe = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: (e) => e.nativeEvent.pageX < 24,
+      onStartShouldSetPanResponder: (e) => e.nativeEvent.pageX < 40,
       onMoveShouldSetPanResponder: (_, gesture) =>
-        gesture.dx > 10 && Math.abs(gesture.dy) < 20,
+        gesture.dx > 8 && Math.abs(gesture.dy) < 30,
       onPanResponderRelease: (_, gesture) => {
-        if (gesture.dx > 60) setSidebarOpen(true);
+        if (gesture.dx > 40) setSidebarOpen(true);
       },
     }),
   ).current;
@@ -82,8 +94,6 @@ export default function HomeScreen() {
     }, []),
   );
 
-  // Every hook above runs unconditionally, as React requires — this is the
-  // earliest point we're allowed to bail out if the profile hasn't loaded yet
   if (!profile) return null;
 
   const yourBirthday = formatDateISO(new Date(profile.birthday));
@@ -97,12 +107,13 @@ export default function HomeScreen() {
   const nextYourBirthday = getNextOccurrence(
     getYearlyOccurrences(yourBirthday).filter((d) => d >= APP_START_DATE),
   );
-  // TODO: PARTNER_BIRTHDAY is still hardcoded — swap to the partner's synced
-  // profile once Firestore sync exists; this device has no way to know it yet
-  const nextPartnerBirthday = getNextOccurrence(
-    getYearlyOccurrences(PARTNER_BIRTHDAY).filter((d) => d >= APP_START_DATE),
-  );
-
+  const nextPartnerBirthday = partner
+    ? getNextOccurrence(
+        getYearlyOccurrences(formatDateISO(new Date(partner.birthday))).filter(
+          (d) => d >= APP_START_DATE,
+        ),
+      )
+    : null;
   const customEventItems = Object.entries(customEvents)
     .map(([monthDay, label]) => {
       const next = getNextOccurrence(
@@ -136,7 +147,7 @@ export default function HomeScreen() {
 
   const sendPoke = () => {
     pokeScale.value = withSequence(
-      withTiming(1.3, { duration: 100 }),
+      withTiming(1.2, { duration: 100 }),
       withTiming(1, { duration: 100 }),
     );
     updateShared({ lastPoke: Date.now() });
@@ -153,13 +164,21 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1 }} {...edgeSwipe.panHandlers}>
-      <Pressable
-        onPress={() => setSidebarOpen(true)}
-        style={styles.menuButton}
-      ></Pressable>
+      <View style={[styles.hero, { height: HERO_HEIGHT }]}>
+        <PhotoSlideshow
+          height={HERO_HEIGHT}
+          rounded={false}
+          style={StyleSheet.absoluteFill}
+        />
+        <LinearGradient
+          colors={["transparent", "#fff"]}
+          style={styles.heroFade}
+          pointerEvents="none"
+        />
+      </View>
 
       <ScreenContainer>
-        <View style={styles.card}>
+        <View style={[styles.card, styles.topCard]}>
           <CalendarHeart color="#e75480" size={28} />
           <Text style={styles.cardTitle}>Together for</Text>
           <Text style={styles.cardBig}>
@@ -203,17 +222,23 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.card}>
-          <Pressable onPress={sendPoke} style={{ alignSelf: "flex-start" }}>
-            <Animated.View style={pokeAnimStyle}>
-              <HandHeart color="#e75480" size={28} />
-            </Animated.View>
-          </Pressable>
-          <Text style={styles.cardTitle}>Miss you button</Text>
-          <Text style={styles.cardBig}>
-            {lastPoke
-              ? `Poked ${formatPokeTime(lastPoke)}`
-              : "Tap the icon to poke her"}
-          </Text>
+          <View style={styles.pokeHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>Miss you button</Text>
+              <Text style={styles.cardBig}>
+                {lastPoke
+                  ? `Missed you ${formatPokeTime(lastPoke)}`
+                  : "Tap if you miss them"}
+              </Text>
+            </View>
+
+            <Pressable onPress={sendPoke}>
+              <Animated.View style={[styles.pokeButton, pokeAnimStyle]}>
+                <HandHeart color="#fff" size={16} />
+                <Text style={styles.pokeButtonText}>I Miss You!</Text>
+              </Animated.View>
+            </Pressable>
+          </View>
         </View>
       </ScreenContainer>
 
@@ -224,6 +249,10 @@ export default function HomeScreen() {
           setSidebarOpen(false);
           setEditProfileOpen(true);
         }}
+        onFutureFeatures={() => {
+          setSidebarOpen(false);
+          setFutureFeaturesOpen(true);
+        }}
         onAbout={() => {
           setSidebarOpen(false);
           setAboutOpen(true);
@@ -233,6 +262,10 @@ export default function HomeScreen() {
         visible={editProfileOpen}
         onClose={() => setEditProfileOpen(false)}
       />
+      <FutureFeaturesModal
+        visible={futureFeaturesOpen}
+        onClose={() => setFutureFeaturesOpen(false)}
+      />
       <AboutModal visible={aboutOpen} onClose={() => setAboutOpen(false)} />
     </View>
   );
@@ -241,8 +274,9 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   greeting: { fontSize: 26, fontWeight: "700", marginBottom: 8 },
   card: { backgroundColor: "#fff5f7", borderRadius: 16, padding: 20, gap: 4 },
-  cardTitle: { fontSize: 14, color: "#888", marginTop: 8 },
-  cardBig: { fontSize: 20, fontWeight: "600" },
+  topCard: { marginTop: -20 },
+  cardTitle: { fontSize: 14, color: "#888" },
+  cardBig: { fontSize: 20, fontWeight: "600", marginTop: 2 },
   cardHint: { fontSize: 12, color: "#aaa" },
   upcomingRow: { fontSize: 15, fontWeight: "600", marginTop: 2 },
   menuButton: {
@@ -251,5 +285,26 @@ const styles = StyleSheet.create({
     left: 12,
     zIndex: 10,
     padding: 8,
+  },
+  hero: { width: "100%" },
+  heroFade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 30 },
+  pokeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  pokeButton: {
+    backgroundColor: "#e75480",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  pokeButtonText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
   },
 });

@@ -1,6 +1,7 @@
 import ScreenContainer from "@/components/ScreenContainer";
-import { APP_START_DATE, PARTNER_BIRTHDAY } from "@/constants/date";
+import { APP_START_DATE } from "@/constants/date";
 import { useProfile } from "@/context/ProfileContext";
+import { usePartnerProfile } from "@/hooks/usePartnerProfile";
 import { useSharedCoupleData } from "@/hooks/useSharedCoupleData";
 import {
   daysUntil,
@@ -127,6 +128,7 @@ function FieldEditor({
 export default function CalendarScreen() {
   const calendarRef = useRef<any>(null);
   const { profile } = useProfile();
+  const partner = usePartnerProfile();
   const { data: shared, update: updateShared } = useSharedCoupleData();
   const { dateNight, notes, customEvents: events } = shared;
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -163,7 +165,12 @@ export default function CalendarScreen() {
     const [, yourMonthStr, yourDayStr] = formatDateISO(
       new Date(profile.birthday),
     ).split("-");
-    const [, partnerMonthStr, partnerDayStr] = PARTNER_BIRTHDAY.split("-");
+    const partnerBirthdayISO = partner
+      ? formatDateISO(new Date(partner.birthday))
+      : null;
+    const [, partnerMonthStr, partnerDayStr] = partnerBirthdayISO
+      ? partnerBirthdayISO.split("-")
+      : [null, null, null];
     const labels: string[] = [];
 
     if (dayStr === annDayStr) {
@@ -183,7 +190,7 @@ export default function CalendarScreen() {
     if (monthStr === partnerMonthStr && dayStr === partnerDayStr)
       labels.push("Her birthday");
     return labels;
-  }, [selectedDate, profile]);
+  }, [selectedDate, profile, partner]);
 
   const sortedNotes = useMemo(
     () =>
@@ -293,9 +300,11 @@ export default function CalendarScreen() {
         (d) => addDot(d, "bday-you", "#8e6bd6"),
       );
     }
-    getYearlyOccurrences(PARTNER_BIRTHDAY).forEach((d) =>
-      addDot(d, "bday-partner", "#8e6bd6"),
-    );
+    if (partner) {
+      getYearlyOccurrences(formatDateISO(new Date(partner.birthday))).forEach(
+        (d) => addDot(d, "bday-partner", "#8e6bd6"),
+      );
+    }
     if (profile) {
       getMonthsaryOccurrences(
         formatDateISO(new Date(profile.anniversary)),
@@ -319,7 +328,7 @@ export default function CalendarScreen() {
       };
     }
     return marks;
-  }, [dateNight, notes, events, selectedDate, profile]);
+  }, [dateNight, notes, events, selectedDate, profile, partner]);
 
   const dateNightCountdown = dateNight ? daysUntil(dateNight) : null;
 

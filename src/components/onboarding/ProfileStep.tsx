@@ -1,6 +1,7 @@
 import { useOnboarding } from "@/context/OnboardingContext";
+import { useProfile } from "@/context/ProfileContext";
 import { COUPLE_ID_KEY, ensureSignedIn, isMemberA } from "@/lib/pairing";
-import { syncProfile, uploadProfilePhoto } from "@/lib/profileSync";
+import { syncProfile } from "@/lib/profileSync";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -22,6 +23,7 @@ type PickerTarget = "birthday" | "anniversary" | null;
 
 export default function ProfileStep(_: Props) {
   const { refreshStatus } = useOnboarding();
+  const { refreshProfile } = useProfile();
 
   const [name, setName] = useState("");
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -80,9 +82,7 @@ export default function ProfileStep(_: Props) {
       const coupleId = await AsyncStorage.getItem(COUPLE_ID_KEY);
       const uid = await ensureSignedIn();
       let photoURL: string | null = null;
-      if (photoUri && coupleId) {
-        photoURL = await uploadProfilePhoto(coupleId, uid, photoUri);
-      }
+
       await AsyncStorage.setItem(
         "userProfile",
         JSON.stringify({
@@ -96,12 +96,12 @@ export default function ProfileStep(_: Props) {
         const memberA = await isMemberA(coupleId, uid);
         await syncProfile(coupleId, memberA, {
           name: name.trim(),
-          photoURL,
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
         });
       }
       await refreshStatus(); // flips status to "onboarded" — root layout swaps to tabs automatically
+      await refreshProfile(); // loads the profile we just saved into context immediately
     } catch {
       setError("Couldn't save your profile — try again.");
     } finally {

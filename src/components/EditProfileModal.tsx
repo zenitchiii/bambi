@@ -1,7 +1,7 @@
 import { useOnboarding } from "@/context/OnboardingContext";
 import { useProfile } from "@/context/ProfileContext";
 import { ensureSignedIn, isMemberA } from "@/lib/pairing";
-import { syncProfile, uploadProfilePhoto } from "@/lib/profileSync";
+import { syncProfile } from "@/lib/profileSync";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -75,11 +75,7 @@ export default function EditProfileModal({ visible, onClose }: Props) {
   async function handleSave() {
     if (!name.trim() || !birthday || !anniversary) return;
     setSaving(true);
-    let photoURL: string | null = null;
-    if (photoUri && coupleId) {
-      const uid = await ensureSignedIn();
-      photoURL = await uploadProfilePhoto(coupleId, uid, photoUri);
-    }
+
     await AsyncStorage.setItem(
       "userProfile",
       JSON.stringify({
@@ -95,7 +91,6 @@ export default function EditProfileModal({ visible, onClose }: Props) {
       const memberA = await isMemberA(coupleId, uid);
       await syncProfile(coupleId, memberA, {
         name: name.trim(),
-        photoURL,
         birthday: birthday.toISOString(),
         anniversary: anniversary.toISOString(),
       });
