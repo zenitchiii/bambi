@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./src/assets/images/bunny.png",
     "scheme": "bambi",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "android": {
       "package": "com.zenitchi.bambi",
       "adaptiveIcon": {
@@ -24,9 +24,10 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#fee6ef",
+          "backgroundColor": "#ffeef4",
           "image": "./src/assets/images/bunny.png",
-          "imageWidth": 160
+          "imageWidth": 200,
+          "resizeMode": "contain"
         }
       ],
       "expo-video",
