@@ -1,56 +1,103 @@
-# Welcome to your Expo app 👋
+# 🐰 Bambi
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A private, two-person couple's app built as a birthday gift. Bambi keeps a shared calendar, a "together for" counter, a memories album and a little poke button in one soft pink app, synced live between two paired phones.
 
-## Get started
+> Built with React Native (Expo) for Android.
 
-1. Install dependencies
+## Features
 
-   ```bash
-   npm install
-   ```
+- **Pairing:** one person hosts a 6-digit code, the other enters it. Pairing is required to use the app.
+- **Onboarding:** swipeable carousel with animated dots (pairing, then name, photo, birthday and anniversary).
+- **Home:** photo slideshow from your memories, a "Together for" counter, "On this day", "Coming up" (including your partner's birthday) and a "Miss you" poke card.
+- **Calendar:** Philippine holidays, both birthdays, anniversary and monthsaries, date night, notes and yearly custom events. Shared between both phones in real time.
+- **Memories:** photos and videos organised by Month, Day and Item, with favorites, covers, captions, multi-select and a custom video player. Stored locally on each phone.
+- **Sidebar:** both partners' names and avatars, invite code, edit profile, about, future features and unpair.
+- **Startup screen:** animated splash with a floating bunny and a loading bar on a pink gradient.
 
-2. Start the app
+## Tech Stack
 
-   ```bash
-   npx expo start
-   ```
+| Area | Tools |
+| --- | --- |
+| Framework | React Native, Expo (SDK managed workflow) |
+| Language | TypeScript |
+| Navigation | Expo Router (file-based routing, typed routes) |
+| Backend | Firebase: Firestore (live sync) and Anonymous Authentication |
+| Local storage | `@react-native-async-storage/async-storage`, `expo-file-system` |
+| Animation | `react-native-reanimated` |
+| UI and media | `expo-image`, `expo-video`, `expo-linear-gradient`, `expo-image-picker`, `lucide-react-native` |
+| Calendar and dates | `react-native-calendars`, `date-holidays`, `@react-native-community/datetimepicker` |
+| Splash | `expo-splash-screen` |
+| Build and delivery | EAS Build (Android APK) |
 
-In the output, you'll find options to open the app in a
+## Project Structure
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+src/
+  app/          Screens and routes (root layout, onboarding, (tabs)/)
+  components/   Reusable UI (Sidebar, modals, PhotoSlideshow, onboarding steps)
+  context/      OnboardingContext, ProfileContext
+  hooks/        useSharedCoupleData, usePartnerProfile
+  lib/          firebase.ts, pairing.ts, profileSync.ts
+  constants/    Shared constants
+  utils/        Date helpers
+  assets/       Images
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## How It Works
 
-### Other setup steps
+- Each phone signs in anonymously to Firebase.
+- Pairing creates a `couples/{code}` document in Firestore holding both members, shared calendar data, the poke timestamp and each partner's basic profile (name, birthday, anniversary).
+- Both phones listen to that document with `onSnapshot`, so changes appear on the other phone straight away.
+- Firestore security rules allow only the two members to read or write their couple document.
+- Profile photos and Memories never leave the device.
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+## Getting Started
 
-## Learn more
+**Prerequisites:** Node.js, an Android phone with Expo Go, and a Firebase project with Firestore and Anonymous Auth enabled.
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+npm install
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Create a `.env` file in the project root (it is gitignored):
 
-## Join the community
+```
+EXPO_PUBLIC_FIREBASE_API_KEY=
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=
+EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=
+EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+EXPO_PUBLIC_FIREBASE_APP_ID=
+```
 
-Join our community of developers creating universal apps.
+Start the dev server and scan the QR code with Expo Go:
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+npx expo start
+```
+
+In development builds, a "Skip onboarding" button on the pairing screen lets you test without a second phone.
+
+## Building an APK
+
+```bash
+eas build -p android --profile preview
+```
+
+The `preview` profile in `eas.json` produces an installable `.apk`. The Firebase values must also be set in that profile's `env` block, since `.env` is not uploaded to EAS.
+
+## Known Limitations
+
+- Memories and profile photos are local to each phone (cross-device photo sync would need Firebase Storage's paid plan).
+- No push notifications yet (needs a development build). The poke is seen the next time the partner opens the app.
+- Unpairing only clears the current phone.
+- Reinstalling the app or clearing its data creates a new anonymous identity and locks that phone out of the couple.
+- The host must keep the pairing screen open until the partner joins.
+
+## Roadmap
+
+Push notifications, shared photo sync, dark mode, an AI daily couples quiz, shared mini-games, a shared bucket list and a UI polish pass.
+
+## Author
+
+Made with love by Zenitchi.
