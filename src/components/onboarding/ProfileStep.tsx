@@ -157,6 +157,7 @@ export default function ProfileStep(_: Props) {
             new Date(2000, 0, 1)
           }
           mode="date"
+          maximumDate={new Date()}
           display={Platform.OS === "ios" ? "spinner" : "default"}
           onValueChange={(_, selectedDate) =>
             selectedDate && handleDateChange(selectedDate)

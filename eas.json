@@ -1,0 +1,30 @@
+{
+  "cli": {
+    "version": ">= 24.8.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": { "buildType": "apk" },
+      "env": {
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyB_P-827juzJ8CsbIhxkb-KSc2wtwLZ_Lg",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "bambi-app-1f245.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "bambi-app-1f245",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "bambi-app-1f245.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "853766967921",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:853766967921:web:7518a0d832f5b8632701d0"
+      }
+    },
+    "production": {
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

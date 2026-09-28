@@ -4,10 +4,10 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LayoutChangeEvent, StyleSheet, View, ViewStyle } from "react-native";
 import Animated, {
-    Easing,
-    useAnimatedStyle,
-    useSharedValue,
-    withTiming,
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
 } from "react-native-reanimated";
 
 const MEMORIES_KEY = "memories";
@@ -15,6 +15,8 @@ const SLIDE_INTERVAL_MS = 4000;
 const SLIDE_DURATION_MS = 1200; // Slow, luxurious 1.2s slide transition
 
 type MemoryItem = { uri: string; date: string; type?: "photo" | "video" };
+
+const MAX_SLIDESHOW_PHOTOS = 15;
 
 function shuffle<T>(array: T[]): T[] {
   const result = [...array];
@@ -56,7 +58,7 @@ export default function PhotoSlideshow({
               m.type !== "video",
           );
 
-          setPhotos(shuffle(validPhotos));
+          setPhotos(shuffle(validPhotos).slice(0, MAX_SLIDESHOW_PHOTOS));
           currentIndexRef.current = 0;
           translateX.value = 0;
         } catch {
