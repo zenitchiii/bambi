@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, memo } from "react";
 import { LayoutChangeEvent, StyleSheet, View, ViewStyle } from "react-native";
 import Animated, {
   Easing,
@@ -29,7 +29,11 @@ function shuffle<T>(array: T[]): T[] {
 
 type Props = { height?: number; rounded?: boolean; style?: ViewStyle };
 
-export default function PhotoSlideshow({
+// memo: Home re-renders on every modal open/close — without this the hero
+// slideshow would re-render (and previously, with the swipe tree
+// unmounting, fully reset) each time "Add a dream" opens. Props are
+// primitives/stable, so memo skips all of that.
+function PhotoSlideshow({
   height = 160,
   rounded = true,
   style,
@@ -43,28 +47,40 @@ export default function PhotoSlideshow({
 
   useFocusEffect(
     useCallback(() => {
-      AsyncStorage.getItem(MEMORIES_KEY).then((saved) => {
-        if (!saved) {
-          setPhotos([]);
-          return;
-        }
-        try {
-          const all: MemoryItem[] = JSON.parse(saved);
-          const validPhotos = all.filter(
-            (m) =>
-              m &&
-              typeof m.uri === "string" &&
-              m.uri.trim() !== "" &&
-              m.type !== "video",
-          );
+      let active = true;
+      AsyncStorage.getItem(MEMORIES_KEY)
+        .then((saved) => {
+          if (!active) return;
+          if (!saved) {
+            setPhotos([]);
+            return;
+          }
+          try {
+            const parsed: unknown = JSON.parse(saved);
+            if (!Array.isArray(parsed)) {
+              setPhotos([]);
+              return;
+            }
+            const validPhotos = parsed.filter(
+              (m: any) =>
+                m &&
+                typeof m.uri === "string" &&
+                m.uri.trim() !== "" &&
+                m.type !== "video",
+            );
 
-          setPhotos(shuffle(validPhotos).slice(0, MAX_SLIDESHOW_PHOTOS));
-          currentIndexRef.current = 0;
-          translateX.value = 0;
-        } catch {
-          setPhotos([]);
-        }
-      });
+            setPhotos(shuffle(validPhotos).slice(0, MAX_SLIDESHOW_PHOTOS));
+            currentIndexRef.current = 0;
+            translateX.value = 0;
+          } catch (e) {
+            if (active) setPhotos([]);
+            console.warn("[slideshow] failed to load memories", e);
+          }
+        })
+        .catch((e) => console.warn("[slideshow] failed to load memories", e));
+      return () => {
+        active = false;
+      };
     }, []),
   );
 
@@ -184,6 +200,8 @@ export default function PhotoSlideshow({
     </View>
   );
 }
+
+export default memo(PhotoSlideshow);
 
 const styles = StyleSheet.create({
   card: { overflow: "hidden" },

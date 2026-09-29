@@ -1,4 +1,5 @@
 import ScreenContainer from "@/components/ScreenContainer";
+import TabSwipeable from "@/components/TabSwipeable";
 import { APP_START_DATE } from "@/constants/date";
 import { useProfile } from "@/context/ProfileContext";
 import { usePartnerProfile } from "@/hooks/usePartnerProfile";
@@ -258,7 +259,17 @@ export default function CalendarScreen() {
 
   const handleSaveEvent = () => {
     if (!monthDay) return;
-    updateShared({ customEvents: { ...events, [monthDay]: eventDraft } });
+    // A blank draft would otherwise persist as an empty-label event and
+    // render as a nameless "— today" row on Home — treat it as a removal.
+    if (eventDraft.trim() === "") {
+      const updated = { ...events };
+      delete updated[monthDay];
+      updateShared({ customEvents: updated });
+    } else {
+      updateShared({
+        customEvents: { ...events, [monthDay]: eventDraft.trim() },
+      });
+    }
     closeOptions();
   };
   const handleRemoveEvent = () => {
@@ -332,29 +343,45 @@ export default function CalendarScreen() {
 
   const dateNightCountdown = dateNight ? daysUntil(dateNight) : null;
 
+  // Shared tab-swipe wiring — spread into each swipe zone below. The month
+  // strip itself is deliberately NOT wrapped: CalendarList already owns
+  // horizontal gestures for month paging, and nesting two horizontal pagers
+  // on one axis would switch tabs on every month swipe.
+  const tabSwipe = {
+    onSwipeLeft: () => router.push("/memories"),
+    onSwipeRight: () => router.push("/"),
+    leftLabel: "Memories",
+    rightLabel: "Home",
+    enabled: !optionsVisible && !monthPickerVisible && !notesListVisible,
+  };
+
   return (
     <ScreenContainer contentContainerStyle={{ gap: 12 }}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Our Calendar</Text>
-        <View style={styles.headerButtons}>
-          <Pressable onPress={handleToday}>
-            <Text style={styles.headerLink}>Today</Text>
-          </Pressable>
-          <Pressable onPress={() => setNotesListVisible(true)}>
-            <Text style={styles.headerLink}>All notes</Text>
-          </Pressable>
-        </View>
-      </View>
+      <TabSwipeable {...tabSwipe}>
+        <View style={{ gap: 12 }}>
+          <View style={styles.headerRow}>
+            <Text style={styles.title}>Our Calendar</Text>
+            <View style={styles.headerButtons}>
+              <Pressable onPress={handleToday}>
+                <Text style={styles.headerLink}>Today</Text>
+              </Pressable>
+              <Pressable onPress={() => setNotesListVisible(true)}>
+                <Text style={styles.headerLink}>All notes</Text>
+              </Pressable>
+            </View>
+          </View>
 
-      {dateNightCountdown !== null && dateNightCountdown >= 0 && (
-        <View style={styles.countdownBanner}>
-          <Text style={styles.countdownText}>
-            {dateNightCountdown === 0
-              ? "Your date is today"
-              : `${dateNightCountdown} day${dateNightCountdown === 1 ? "" : "s"} until your date`}
-          </Text>
+          {dateNightCountdown !== null && dateNightCountdown >= 0 && (
+            <View style={styles.countdownBanner}>
+              <Text style={styles.countdownText}>
+                {dateNightCountdown === 0
+                  ? "Your date is today"
+                  : `${dateNightCountdown} day${dateNightCountdown === 1 ? "" : "s"} until your date`}
+              </Text>
+            </View>
+          )}
         </View>
-      )}
+      </TabSwipeable>
 
       <CalendarList
         key={calendarKey}
@@ -393,7 +420,8 @@ export default function CalendarScreen() {
         }}
       />
 
-      <View style={styles.panel}>
+      <TabSwipeable {...tabSwipe}>
+        <View style={styles.panel}>
         {selectedDate ? (
           <>
             <View style={styles.panelHeader}>
@@ -431,7 +459,8 @@ export default function CalendarScreen() {
             Tap a date to see its details here
           </Text>
         )}
-      </View>
+        </View>
+      </TabSwipeable>
 
       <Modal
         visible={optionsVisible}

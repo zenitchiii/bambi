@@ -55,11 +55,14 @@ export default function EditProfileModal({ visible, onClose }: Props) {
     });
     if (result.canceled) return;
     const pickedUri = result.assets[0].uri;
-    const extension = pickedUri.split(".").pop() ?? "jpg";
+    const extension = pickedUri.split(".").pop()?.split("?")[0] ?? "jpg";
     const destination = `${FileSystem.documentDirectory}profile-photo.${extension}`;
     await FileSystem.deleteAsync(destination, { idempotent: true });
     await FileSystem.copyAsync({ from: pickedUri, to: destination });
-    setPhotoUri(destination);
+    // The file path is reused on every upload, so the image component would
+    // keep showing the cached old photo — bust the cache with a timestamp
+    // and update state immediately so the new photo shows right away.
+    setPhotoUri(`${destination}?t=${Date.now()}`);
   }
 
   function handleDateChange(selectedDate: Date) {
@@ -76,27 +79,30 @@ export default function EditProfileModal({ visible, onClose }: Props) {
     if (!name.trim() || !birthday || !anniversary) return;
     setSaving(true);
 
-    await AsyncStorage.setItem(
-      "userProfile",
-      JSON.stringify({
-        name: name.trim(),
-        photoUri,
-        birthday: birthday.toISOString(),
-        anniversary: anniversary.toISOString(),
-      }),
-    );
-    await refreshProfile();
-    if (coupleId) {
-      const uid = await ensureSignedIn();
-      const memberA = await isMemberA(coupleId, uid);
-      await syncProfile(coupleId, memberA, {
-        name: name.trim(),
-        birthday: birthday.toISOString(),
-        anniversary: anniversary.toISOString(),
-      });
+    try {
+      await AsyncStorage.setItem(
+        "userProfile",
+        JSON.stringify({
+          name: name.trim(),
+          photoUri,
+          birthday: birthday.toISOString(),
+          anniversary: anniversary.toISOString(),
+        }),
+      );
+      await refreshProfile();
+      if (coupleId) {
+        const uid = await ensureSignedIn();
+        const memberA = await isMemberA(coupleId, uid);
+        await syncProfile(coupleId, memberA, {
+          name: name.trim(),
+          birthday: birthday.toISOString(),
+          anniversary: anniversary.toISOString(),
+        });
+      }
+      onClose();
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    onClose();
   }
 
   return (

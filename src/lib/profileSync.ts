@@ -25,9 +25,13 @@ export function watchPartnerProfile(
   isMemberA: boolean,
   onUpdate: (profile: SyncedProfile | null) => void,
 ) {
-  return onSnapshot(doc(db, "couples", coupleId), (snap) => {
-    if (!snap.exists()) return onUpdate(null);
-    const data = snap.data();
-    onUpdate((isMemberA ? data.profileB : data.profileA) ?? null);
-  });
+  return onSnapshot(
+    doc(db, "couples", coupleId),
+    (snap) => {
+      if (!snap.exists()) return onUpdate(null);
+      const data = snap.data();
+      onUpdate((isMemberA ? data.profileB : data.profileA) ?? null);
+    },
+    (error) => console.warn("[watchPartnerProfile]", error),
+  );
 }

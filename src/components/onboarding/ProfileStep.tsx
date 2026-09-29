@@ -50,11 +50,13 @@ export default function ProfileStep(_: Props) {
     // Copy into the app's own document directory so it persists reliably —
     // same reasoning as how Memories stores photos rather than the picker's temp URI
     const pickedUri = result.assets[0].uri;
-    const extension = pickedUri.split(".").pop() ?? "jpg";
+    const extension = pickedUri.split(".").pop()?.split("?")[0] ?? "jpg";
     const destination = `${FileSystem.documentDirectory}profile-photo.${extension}`;
     await FileSystem.deleteAsync(destination, { idempotent: true });
     await FileSystem.copyAsync({ from: pickedUri, to: destination });
-    setPhotoUri(destination);
+    // Same path is reused on every upload — bust the image cache so the new
+    // photo renders immediately instead of the stale cached one.
+    setPhotoUri(`${destination}?t=${Date.now()}`);
   }
 
   function handleDateChange(selectedDate: Date) {

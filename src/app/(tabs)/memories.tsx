@@ -1,25 +1,13 @@
+import MediaViewer from "@/components/memories/MediaViewer";
 import ScreenContainer from "@/components/ScreenContainer";
+import TabSwipeable from "@/components/TabSwipeable";
 import { formatDateISO } from "@/utils/dateMath";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import Slider from "@react-native-community/slider";
-import { useEvent } from "expo";
 import * as FileSystem from "expo-file-system/legacy";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import { VideoView, useVideoPlayer } from "expo-video";
-import {
-  Check,
-  ChevronLeft,
-  Heart,
-  Pause,
-  Play,
-  Plus,
-  RotateCcw,
-  Star,
-  Trash2,
-  X,
-} from "lucide-react-native";
+import { Check, ChevronLeft, Heart, Play, Plus } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -29,20 +17,12 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSequence,
-  withTiming,
-} from "react-native-reanimated";
 
 const MEMORIES_KEY = "memories";
 const COVERS_KEY = "albumCovers";
 const SCREEN_WIDTH = Dimensions.get("window").width;
-const SCREEN_HEIGHT = Dimensions.get("window").height;
 const GRID_GAP = 4;
 const COLUMNS = 3;
 const ITEM_SIZE = (SCREEN_WIDTH - 40 - GRID_GAP * (COLUMNS - 1)) / COLUMNS;
@@ -134,114 +114,6 @@ function formatMonthLabel(monthKey: string): string {
   });
 }
 
-function formatTime(seconds: number): string {
-  if (!seconds || isNaN(seconds)) return "0:00";
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function VideoPage({ uri, isActive }: { uri: string; isActive: boolean }) {
-  const player = useVideoPlayer(uri, (p) => {
-    p.timeUpdateEventInterval = 0.5;
-    if (isActive) p.play();
-  });
-
-  useEffect(() => {
-    if (isActive) player.play();
-    else player.pause();
-  }, [isActive]);
-  const { isPlaying } = useEvent(player, "playingChange", {
-    isPlaying: player.playing,
-  });
-  const { currentTime } = useEvent(player, "timeUpdate", {
-    currentTime: player.currentTime,
-    currentLiveTimestamp: null,
-    currentOffsetFromLive: null,
-    bufferedPosition: 0,
-  });
-  const duration = player.duration || 0;
-  const toggle = () => (isPlaying ? player.pause() : player.play());
-
-  return (
-    <View style={styles.page}>
-      <VideoView
-        style={styles.pageMedia}
-        player={player}
-        nativeControls={false}
-        contentFit="contain"
-      />
-      <Pressable style={StyleSheet.absoluteFill} onPress={toggle}>
-        {!isPlaying && (
-          <View style={styles.centerPlayButton}>
-            <Play color="#fff" size={36} fill="#fff" />
-          </View>
-        )}
-      </Pressable>
-      <View style={styles.videoControls}>
-        <Slider
-          style={styles.videoSlider}
-          minimumValue={0}
-          maximumValue={duration || 1}
-          value={currentTime}
-          minimumTrackTintColor="#e75480"
-          maximumTrackTintColor="rgba(255,255,255,0.3)"
-          thumbTintColor="#e75480"
-          onSlidingComplete={(v) => {
-            player.currentTime = v;
-          }}
-        />
-        <View style={styles.videoControlsRow}>
-          <View style={styles.videoControlsLeft}>
-            <Pressable onPress={toggle}>
-              {isPlaying ? (
-                <Pause color="#fff" size={22} fill="#fff" />
-              ) : (
-                <Play color="#fff" size={22} fill="#fff" />
-              )}
-            </Pressable>
-            <Pressable
-              onPress={() => {
-                player.currentTime = 0;
-              }}
-            >
-              <RotateCcw color="#fff" size={20} />
-            </Pressable>
-          </View>
-          <Text style={styles.videoTime}>
-            {formatTime(currentTime)} / {formatTime(duration)}
-          </Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function AnimatedIconButton({
-  onPress,
-  children,
-}: {
-  onPress: () => void;
-  children: React.ReactNode;
-}) {
-  const scale = useSharedValue(1);
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-  const handlePress = () => {
-    scale.value = withSequence(
-      withTiming(1.3, { duration: 100 }),
-      withTiming(1, { duration: 100 }),
-    );
-    onPress();
-  };
-  return (
-    <Pressable onPress={handlePress} style={styles.iconButton}>
-      <Animated.View style={animatedStyle}>{children}</Animated.View>
-    </Pressable>
-  );
-}
-
 export default function MemoriesScreen() {
   const params = useLocalSearchParams<{ date?: string }>();
 
@@ -265,21 +137,41 @@ export default function MemoriesScreen() {
   const itemSelection = useMultiSelect();
 
   useEffect(() => {
-    AsyncStorage.getItem(MEMORIES_KEY).then((saved) => {
-      if (!saved) return;
-      const parsed: any[] = JSON.parse(saved);
-      setMemories(
-        parsed.map((m) => ({
-          ...m,
-          date:
-            m.date ??
-            formatDateISO(new Date(Number(m.id?.split("-")[0]) || Date.now())),
-        })),
-      );
-    });
-    AsyncStorage.getItem(COVERS_KEY).then(
-      (saved) => saved && setCovers(JSON.parse(saved)),
-    );
+    let mounted = true;
+    (async () => {
+      try {
+        const [savedMemories, savedCovers] = await Promise.all([
+          AsyncStorage.getItem(MEMORIES_KEY),
+          AsyncStorage.getItem(COVERS_KEY),
+        ]);
+        if (!mounted) return;
+        if (savedMemories) {
+          const parsed: unknown = JSON.parse(savedMemories);
+          if (Array.isArray(parsed)) {
+            setMemories(
+              parsed.map((m: any) => ({
+                ...m,
+                date:
+                  m.date ??
+                  formatDateISO(
+                    new Date(Number(m.id?.split("-")[0]) || Date.now()),
+                  ),
+              })),
+            );
+          }
+        }
+        if (savedCovers) {
+          const parsedCovers: unknown = JSON.parse(savedCovers);
+          if (parsedCovers && typeof parsedCovers === "object")
+            setCovers(parsedCovers as typeof covers);
+        }
+      } catch (e) {
+        console.warn("[memories] failed to load", e);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -323,8 +215,10 @@ export default function MemoriesScreen() {
     const targetDate =
       openAlbum && openAlbum !== FAVORITES_ALBUM ? openAlbum : TODAY;
     const newOnes: Memory[] = [];
-    for (const a of result.assets) {
-      const id = `${Date.now()}-${a.assetId ?? Math.random()}`;
+    for (const [i, a] of result.assets.entries()) {
+      // Index suffix: multi-selects share one Date.now() ms, and assetId can
+      // be missing — without it two items would get the same id (and key).
+      const id = `${Date.now()}-${i}-${a.assetId ?? Math.random()}`;
       const storedUri = await copyToAppStorage(a.uri, id);
       newOnes.push({
         id,
@@ -415,21 +309,31 @@ export default function MemoriesScreen() {
     );
   }, [openAlbum, favorites, daySections]);
 
-  useEffect(() => {
-    if (openAlbum === FAVORITES_ALBUM && favorites.length === 0) {
-      setOpenAlbum(null);
-    }
-  }, [openAlbum, favorites]);
-
-  const viewerSourceList =
-    openAlbum === FAVORITES_ALBUM ? favorites : currentAlbumItems;
-
+  // Favorites album stops existing the moment its last item is unfavorited —
+  // close both the album and the viewer so we never render an empty viewer.
   useEffect(() => {
     if (openAlbum === FAVORITES_ALBUM && favorites.length === 0) {
       setOpenAlbum(null);
       setViewerOpen(false);
     }
   }, [openAlbum, favorites]);
+
+  const viewerSourceList =
+    openAlbum === FAVORITES_ALBUM ? favorites : currentAlbumItems;
+
+  // Title shown in the viewer's top bar — falls back up the drill-down stack.
+  const viewerTitle =
+    openAlbum === FAVORITES_ALBUM
+      ? "Favorites"
+      : openAlbum
+        ? formatDayLabel(openAlbum)
+        : openMonth
+          ? formatMonthLabel(openMonth)
+          : "Memories";
+
+  // Tab swipes stay off while the viewer or any sheet owns the screen.
+  const tabSwipeEnabled = !viewerOpen && !filterVisible && !moveModalVisible;
+
   // ---------- viewer ----------
   const openViewer = (index: number) => {
     setViewerIndex(index);
@@ -601,7 +505,12 @@ export default function MemoriesScreen() {
   // ================= LEVEL 0: Month grid =================
   if (!openMonth && !openAlbum) {
     return (
-      <ScreenContainer contentContainerStyle={{ gap: 16 }}>
+      <TabSwipeable
+        onSwipeRight={() => router.push("/calendar")}
+        leftLabel="Calendar"
+        enabled={tabSwipeEnabled}
+      >
+        <ScreenContainer contentContainerStyle={{ gap: 16 }}>
         {monthSelection.active ? (
           <View style={styles.headerRow}>
             <Text style={styles.title}>
@@ -735,6 +644,7 @@ export default function MemoriesScreen() {
           list={viewerSourceList}
           index={viewerIndex}
           visible={viewerOpen}
+          headerTitle={viewerTitle}
           onIndexChange={setViewerIndex}
           onClose={closeViewer}
           onToggleFavorite={toggleFavorite}
@@ -794,13 +704,19 @@ export default function MemoriesScreen() {
           </Pressable>
         </Modal>
       </ScreenContainer>
+      </TabSwipeable>
     );
   }
 
   // ================= LEVEL 1: Day grid within a month =================
   if (openMonth && !openAlbum) {
     return (
-      <ScreenContainer contentContainerStyle={{ gap: 16 }}>
+      <TabSwipeable
+        onSwipeRight={() => router.push("/calendar")}
+        leftLabel="Calendar"
+        enabled={tabSwipeEnabled}
+      >
+        <ScreenContainer contentContainerStyle={{ gap: 16 }}>
         {daySelection.active ? (
           <View style={styles.headerRow}>
             <Text style={styles.title}>
@@ -898,6 +814,7 @@ export default function MemoriesScreen() {
           list={viewerSourceList}
           visible={viewerOpen}
           index={viewerIndex}
+          headerTitle={viewerTitle}
           onIndexChange={setViewerIndex}
           onClose={closeViewer}
           onToggleFavorite={toggleFavorite}
@@ -911,6 +828,7 @@ export default function MemoriesScreen() {
           onSetCover={() => {}}
         />
       </ScreenContainer>
+      </TabSwipeable>
     );
   }
 
@@ -919,7 +837,12 @@ export default function MemoriesScreen() {
     openAlbum === FAVORITES_ALBUM ? "Favorites" : formatDayLabel(openAlbum!);
 
   return (
-    <ScreenContainer contentContainerStyle={{ gap: 16 }}>
+    <TabSwipeable
+      onSwipeRight={() => router.push("/calendar")}
+      leftLabel="Calendar"
+      enabled={tabSwipeEnabled}
+    >
+      <ScreenContainer contentContainerStyle={{ gap: 16 }}>
       {itemSelection.active ? (
         <View style={styles.headerRow}>
           <Text style={styles.title}>
@@ -1063,6 +986,7 @@ export default function MemoriesScreen() {
         list={viewerSourceList}
         visible={viewerOpen}
         index={viewerIndex}
+        headerTitle={viewerTitle}
         onIndexChange={setViewerIndex}
         onClose={closeViewer}
         onToggleFavorite={toggleFavorite}
@@ -1112,152 +1036,7 @@ export default function MemoriesScreen() {
         </Pressable>
       </Modal>
     </ScreenContainer>
-  );
-}
-
-function MediaViewer({
-  list,
-  visible,
-  index,
-  onIndexChange,
-  onClose,
-  onToggleFavorite,
-  onRemove,
-  captionDraft,
-  setCaptionDraft,
-  editingCaption,
-  setEditingCaption,
-  onSaveCaption,
-  canSetCover,
-  coverId,
-  onSetCover,
-}: {
-  list: Memory[];
-  visible: boolean;
-  index: number;
-  onIndexChange: (i: number) => void;
-  onClose: () => void;
-  onToggleFavorite: (item: Memory) => void;
-  onRemove: (item: Memory) => void;
-  captionDraft: string;
-  setCaptionDraft: (v: string) => void;
-  editingCaption: boolean;
-  setEditingCaption: (v: boolean) => void;
-  onSaveCaption: () => void;
-  canSetCover: boolean;
-  coverId?: string;
-  onSetCover: (item: Memory) => void;
-}) {
-  const current = list[index] ?? null;
-
-  useEffect(() => {
-    if (current) setCaptionDraft(current.caption ?? "");
-  }, [current?.id]);
-
-  if (!visible) return null;
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <View style={styles.viewerOverlay}>
-        <FlatList
-          data={list}
-          horizontal
-          pagingEnabled
-          initialScrollIndex={index}
-          getItemLayout={(_, i) => ({
-            length: SCREEN_WIDTH,
-            offset: SCREEN_WIDTH * i,
-            index: i,
-          })}
-          keyExtractor={(item) => item.id}
-          onMomentumScrollEnd={(e) =>
-            onIndexChange(
-              Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH),
-            )
-          }
-          renderItem={({ item, index: itemIndex }) =>
-            item.type === "image" ? (
-              <View style={styles.page}>
-                <Image
-                  source={{ uri: item.uri }}
-                  style={styles.pageMedia}
-                  contentFit="contain"
-                  cachePolicy="memory-disk"
-                />
-              </View>
-            ) : (
-              <VideoPage uri={item.uri} isActive={itemIndex === index} />
-            )
-          }
-        />
-
-        <Pressable style={styles.viewerClose} onPress={onClose}>
-          <X color="#fff" size={28} />
-        </Pressable>
-
-        {current && (
-          <View style={styles.viewerTopRight}>
-            <AnimatedIconButton onPress={() => onToggleFavorite(current)}>
-              <Heart
-                color="#fff"
-                size={20}
-                fill={current.favorite ? "#e75480" : "transparent"}
-              />
-            </AnimatedIconButton>
-            {canSetCover && (
-              <AnimatedIconButton onPress={() => onSetCover(current)}>
-                <Star
-                  color="#fff"
-                  size={20}
-                  fill={current.id === coverId ? "#d0ff00" : "transparent"}
-                />
-              </AnimatedIconButton>
-            )}
-            <AnimatedIconButton onPress={() => onRemove(current)}>
-              <Trash2 color="#fff" size={20} />
-            </AnimatedIconButton>
-          </View>
-        )}
-
-        {current && (
-          <View style={styles.captionBar}>
-            {editingCaption ? (
-              <View style={styles.captionEditRow}>
-                <TextInput
-                  style={styles.captionInput}
-                  value={captionDraft}
-                  onChangeText={setCaptionDraft}
-                  placeholder="Add a caption..."
-                  placeholderTextColor="#999"
-                  maxLength={80}
-                  autoFocus
-                />
-                <Pressable onPress={onSaveCaption}>
-                  <Text style={styles.captionSave}>Save</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <Pressable onPress={() => setEditingCaption(true)}>
-                <Text
-                  style={
-                    current.caption
-                      ? styles.captionText
-                      : styles.captionPlaceholder
-                  }
-                >
-                  {current.caption || "Add a caption..."}
-                </Text>
-              </Pressable>
-            )}
-          </View>
-        )}
-      </View>
-    </Modal>
+    </TabSwipeable>
   );
 }
 
@@ -1350,77 +1129,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   checkCircleActive: { backgroundColor: "#e75480", borderColor: "#e75480" },
-  viewerOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)" },
-  page: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
-    justifyContent: "center",
-  },
-  pageMedia: { width: SCREEN_WIDTH, height: "70%" },
-  viewerClose: { position: "absolute", top: 60, left: 20, zIndex: 1 },
-  viewerTopRight: {
-    position: "absolute",
-    top: 60,
-    right: 20,
-    flexDirection: "row",
-    gap: 10,
-    zIndex: 1,
-  },
-  iconButton: {
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: 18,
-    width: 36,
-    height: 36,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  captionBar: { position: "absolute", bottom: 110, left: 20, right: 20 },
-  captionText: { color: "#fff", fontSize: 14, textAlign: "center" },
-  captionPlaceholder: {
-    color: "rgba(255,255,255,0.4)",
-    fontSize: 14,
-    textAlign: "center",
-    fontStyle: "italic",
-  },
-  captionEditRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    borderRadius: 10,
-    padding: 8,
-  },
-  captionInput: { flex: 1, color: "#fff", fontSize: 14 },
-  captionSave: { color: "#e75480", fontWeight: "700" },
-  centerPlayButton: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.2)",
-  },
-  videoControls: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: "#1a1a1a",
-    paddingTop: 4,
-    paddingBottom: 10,
-    paddingHorizontal: 12,
-    gap: 2,
-  },
-  videoSlider: { width: "100%", height: 26 },
-  videoControlsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  videoControlsLeft: { flexDirection: "row", alignItems: "center", gap: 18 },
-  videoTime: { color: "#fff", fontSize: 12 },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",

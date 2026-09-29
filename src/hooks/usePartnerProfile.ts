@@ -9,13 +9,24 @@ export function usePartnerProfile() {
 
   useEffect(() => {
     if (!coupleId) return;
+    let mounted = true;
     let unsubscribe: (() => void) | undefined;
     (async () => {
-      const uid = await ensureSignedIn();
-      const memberA = await isMemberA(coupleId, uid);
-      unsubscribe = watchPartnerProfile(coupleId, memberA, setPartner);
+      try {
+        const uid = await ensureSignedIn();
+        const memberA = await isMemberA(coupleId, uid);
+        if (!mounted) return;
+        unsubscribe = watchPartnerProfile(coupleId, memberA, (p) => {
+          if (mounted) setPartner(p);
+        });
+      } catch (e) {
+        console.warn("[partner] failed to subscribe", e);
+      }
     })();
-    return () => unsubscribe?.();
+    return () => {
+      mounted = false;
+      unsubscribe?.();
+    };
   }, [coupleId]);
 
   return partner;

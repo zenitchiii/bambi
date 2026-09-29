@@ -29,8 +29,15 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
 
   const refreshProfile = useCallback(async () => {
-    const raw = await AsyncStorage.getItem("userProfile");
-    setProfile(raw ? JSON.parse(raw) : null);
+    try {
+      const raw = await AsyncStorage.getItem("userProfile");
+      setProfile(raw ? JSON.parse(raw) : null);
+    } catch (e) {
+      // Storage failure previously left callers hanging with an unhandled
+      // rejection — fall back to null instead.
+      console.warn("[profile] failed to load", e);
+      setProfile(null);
+    }
   }, []);
 
   useEffect(() => {

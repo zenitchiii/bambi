@@ -26,12 +26,20 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [coupleId, setCoupleId] = useState<string | null>(null);
 
   const refreshStatus = useCallback(async () => {
-    const [storedCoupleId, profile] = await Promise.all([
-      AsyncStorage.getItem(COUPLE_ID_KEY),
-      AsyncStorage.getItem("userProfile"),
-    ]);
-    setCoupleId(storedCoupleId);
-    setStatus(storedCoupleId && profile ? "onboarded" : "needs-onboarding");
+    try {
+      const [storedCoupleId, profile] = await Promise.all([
+        AsyncStorage.getItem(COUPLE_ID_KEY),
+        AsyncStorage.getItem("userProfile"),
+      ]);
+      setCoupleId(storedCoupleId);
+      setStatus(storedCoupleId && profile ? "onboarded" : "needs-onboarding");
+    } catch (e) {
+      // Without this the app stays on the splash screen forever when storage
+      // throws — safest fallback is to send the user through onboarding.
+      console.warn("[onboarding] failed to load status", e);
+      setCoupleId(null);
+      setStatus("needs-onboarding");
+    }
   }, []);
 
   useEffect(() => {

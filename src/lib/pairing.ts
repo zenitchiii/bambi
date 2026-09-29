@@ -11,11 +11,20 @@ import {
 
 const COUPLE_ID_KEY = "coupleId";
 
+export interface BucketListItem {
+  id: string;
+  title: string;
+  completed: boolean;
+  createdAt: number;
+  completedAt: number | null;
+}
+
 export type SharedCoupleData = {
   dateNight: string | null;
   notes: Record<string, string>;
   customEvents: Record<string, string>;
   lastPoke: number | null;
+  bucketList: BucketListItem[];
 };
 
 const DEFAULT_SHARED_DATA: SharedCoupleData = {
@@ -23,6 +32,7 @@ const DEFAULT_SHARED_DATA: SharedCoupleData = {
   notes: {},
   customEvents: {},
   lastPoke: null,
+  bucketList: [],
 };
 
 export async function updateSharedData(
@@ -37,10 +47,23 @@ export function watchSharedData(
   coupleId: string,
   onUpdate: (data: SharedCoupleData) => void,
 ) {
-  return onSnapshot(doc(db, "couples", coupleId), (snap) => {
-    if (!snap.exists()) return;
-    onUpdate({ ...DEFAULT_SHARED_DATA, ...snap.data() });
-  });
+  return onSnapshot(
+    doc(db, "couples", coupleId),
+    (snap) => {
+      if (!snap.exists()) return;
+      const raw = snap.data();
+      onUpdate({
+        ...DEFAULT_SHARED_DATA,
+        ...raw,
+        // Older couple docs predate bucketList — fall back to [] so the
+        // UI never has to null-check.
+        bucketList: Array.isArray(raw.bucketList) ? raw.bucketList : [],
+      });
+    },
+    // Without this, permission/network errors fail silently and sync just
+    // looks "stuck".
+    (error) => console.warn("[watchSharedData]", error),
+  );
 }
 // Signs this device in anonymously if it isn't already, and resolves once
 // we have a stable Firebase UID to work with
@@ -93,9 +116,13 @@ export async function joinCoupleCode(
 // Watches a couple doc in real time — used by the first phone to know the
 // moment the second phone joins, without needing to manually refresh
 export function watchCouple(code: string, onUpdate: (data: any) => void) {
-  return onSnapshot(doc(db, "couples", code), (snap) => {
-    if (snap.exists()) onUpdate(snap.data());
-  });
+  return onSnapshot(
+    doc(db, "couples", code),
+    (snap) => {
+      if (snap.exists()) onUpdate(snap.data());
+    },
+    (error) => console.warn("[watchCouple]", error),
+  );
 }
 
 export { COUPLE_ID_KEY };
