@@ -1,6 +1,7 @@
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
 import {
+  deleteField,
   doc,
   getDoc,
   onSnapshot,
@@ -8,6 +9,12 @@ import {
   setDoc,
   updateDoc,
 } from "firebase/firestore";
+import { normalizePeriods, pruneLogs } from "@/utils/cycle";
+// Single definition lives in cycle.ts (dependency-free); re-exported here
+// so existing `from "@/lib/pairing"` imports keep working.
+import type { CycleLog, CyclePeriod } from "@/utils/cycle";
+export type { CycleLog, CyclePeriod } from "@/utils/cycle";
+import { formatDateISO } from "@/utils/dateMath";
 
 const COUPLE_ID_KEY = "coupleId";
 
@@ -19,12 +26,28 @@ export interface BucketListItem {
   completedAt: number | null;
 }
 
+export interface CycleData {
+  // Writer version; set on every versioned write, absent on older docs.
+  v?: 2 | 3;
+  // Legacy read path only. Writers persist `periods` and never touch this;
+  // normalize derives it from records so pre-redesign UI keeps working.
+  periodStarts?: string[];
+  // Per-period records (v2+). End absent = ongoing.
+  periods?: CyclePeriod[];
+  // Dormant until the logs phase: tolerated on read, never written yet.
+  logs?: CycleLog[];
+  // Manual overrides (days). UI falls back to 28 / 5 when absent.
+  cycleLength?: number;
+  periodLength?: number;
+}
+
 export type SharedCoupleData = {
   dateNight: string | null;
   notes: Record<string, string>;
   customEvents: Record<string, string>;
   lastPoke: number | null;
   bucketList: BucketListItem[];
+  cycle: CycleData;
 };
 
 const DEFAULT_SHARED_DATA: SharedCoupleData = {
@@ -33,6 +56,7 @@ const DEFAULT_SHARED_DATA: SharedCoupleData = {
   customEvents: {},
   lastPoke: null,
   bucketList: [],
+  cycle: { periodStarts: [], periods: [] },
 };
 
 export async function updateSharedData(
@@ -58,11 +82,68 @@ export function watchSharedData(
         // Older couple docs predate bucketList — fall back to [] so the
         // UI never has to null-check.
         bucketList: Array.isArray(raw.bucketList) ? raw.bucketList : [],
+        cycle: normalizeCycle(raw.cycle, formatDateISO(new Date())),
       });
     },
     // Without this, permission/network errors fail silently and sync just
     // looks "stuck".
     (error) => console.warn("[watchSharedData]", error),
+  );
+}
+// Couple docs written before a field existed (or partial writes) must load
+// as sane defaults so the UI never null-checks. Period logic lives in
+// cycle.ts; this is just the Firestore-facing adapter. `periodStarts` is
+// derived from the records so pre-redesign readers keep working through
+// the migration.
+export function normalizeCycle(raw: unknown, todayISO: string): CycleData {
+  if (!raw || typeof raw !== "object") {
+    return { periodStarts: [], periods: [] };
+  }
+  const c = raw as Partial<CycleData>;
+  const periods = normalizePeriods(raw, todayISO);
+  return {
+    periodStarts: periods.map((p) => p.start),
+    periods,
+    // Logs are dormant: tolerated so future data survives reads, but this
+    // layer never interprets them (phase 5 owns log validation + writes).
+    ...(Array.isArray(c.logs) ? { logs: c.logs } : {}),
+    ...(typeof c.cycleLength === "number"
+      ? { cycleLength: c.cycleLength }
+      : {}),
+    ...(typeof c.periodLength === "number"
+      ? { periodLength: c.periodLength }
+      : {}),
+  };
+}
+
+// Single writer for v3 cycle data. Replaces the whole cycle object and
+// deletes the legacy periodStarts field on first write (idempotent after
+// that); merge keeps every other top-level couple field untouched. Logs,
+// when present, are pruned to ~180 days on the way in.
+export async function writeCycle(
+  coupleId: string,
+  cycle: {
+    v: 3;
+    periods: CyclePeriod[];
+    logs?: CycleLog[];
+    cycleLength?: number;
+    periodLength?: number;
+  },
+) {
+  await ensureSignedIn();
+  // `undefined` values are illegal in setDoc payloads, so the pruned logs
+  // key is spread conditionally rather than set to undefined.
+  const { logs, ...rest } = cycle;
+  await setDoc(
+    doc(db, "couples", coupleId),
+    {
+      cycle: {
+        ...rest,
+        ...(logs ? { logs: pruneLogs(logs, formatDateISO(new Date())) } : {}),
+        periodStarts: deleteField(),
+      },
+    },
+    { merge: true },
   );
 }
 // Signs this device in anonymously if it isn't already, and resolves once

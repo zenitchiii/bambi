@@ -11,7 +11,13 @@ export function usePartnerProfile() {
     if (!coupleId) return;
     let mounted = true;
     let unsubscribe: (() => void) | undefined;
-    (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    // Cold-start offline (or flaky WiFi) makes the one-time role check
+    // throw. Retry a few times as the connection comes up instead of
+    // giving up and leaving the partner stuck on "Waiting..." — warn only
+    // if all attempts fail.
+    const trySubscribe = async () => {
       try {
         const uid = await ensureSignedIn();
         const memberA = await isMemberA(coupleId, uid);
@@ -20,12 +26,20 @@ export function usePartnerProfile() {
           if (mounted) setPartner(p);
         });
       } catch (e) {
-        console.warn("[partner] failed to subscribe", e);
+        if (!mounted) return;
+        attempts += 1;
+        if (attempts <= 3) {
+          timer = setTimeout(trySubscribe, attempts * 2000);
+        } else {
+          console.warn("[partner] failed to subscribe", e);
+        }
       }
-    })();
+    };
+    trySubscribe();
     return () => {
       mounted = false;
       unsubscribe?.();
+      if (timer) clearTimeout(timer);
     };
   }, [coupleId]);
 

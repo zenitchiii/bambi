@@ -1,7 +1,7 @@
 import { useOnboarding } from "@/context/OnboardingContext";
 import { useProfile } from "@/context/ProfileContext";
 import { ensureSignedIn, isMemberA } from "@/lib/pairing";
-import { syncProfile } from "@/lib/profileSync";
+import { syncProfile, type Gender } from "@/lib/profileSync";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -17,6 +17,7 @@ import {
   Text,
   TextInput,
 } from "react-native";
+import GenderPicker from "@/components/GenderPicker";
 
 type Props = { visible: boolean; onClose: () => void };
 type PickerTarget = "birthday" | "anniversary" | null;
@@ -29,6 +30,7 @@ export default function EditProfileModal({ visible, onClose }: Props) {
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [birthday, setBirthday] = useState<Date | null>(null);
   const [anniversary, setAnniversary] = useState<Date | null>(null);
+  const [gender, setGender] = useState<Gender | null>(null);
   const [activePicker, setActivePicker] = useState<PickerTarget>(null);
   const [saving, setSaving] = useState(false);
 
@@ -41,6 +43,7 @@ export default function EditProfileModal({ visible, onClose }: Props) {
       setPhotoUri(profile.photoUri);
       setBirthday(new Date(profile.birthday));
       setAnniversary(new Date(profile.anniversary));
+      setGender(profile.gender ?? null);
     }
   }, [visible, profile]);
 
@@ -87,6 +90,7 @@ export default function EditProfileModal({ visible, onClose }: Props) {
           photoUri,
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
+          ...(gender ? { gender } : {}),
         }),
       );
       await refreshProfile();
@@ -97,6 +101,7 @@ export default function EditProfileModal({ visible, onClose }: Props) {
           name: name.trim(),
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
+          ...(gender ? { gender } : {}),
         });
       }
       onClose();
@@ -152,6 +157,15 @@ export default function EditProfileModal({ visible, onClose }: Props) {
                 : "Set anniversary"}
             </Text>
           </Pressable>
+
+          {/* One-time prompt for profiles saved before gender existed —
+              vanishes after the first save with a choice. Never blocks. */}
+          {profile && !profile.gender && (
+            <Text style={styles.genderPrompt}>
+              Choose an option to unlock the cycle tracker.
+            </Text>
+          )}
+          <GenderPicker value={gender} onChange={setGender} />
 
           {activePicker && (
             <DateTimePicker
@@ -239,6 +253,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   dateButtonText: { fontSize: 15, color: "#333" },
+  genderPrompt: {
+    fontSize: 13,
+    color: "#e75480",
+    textAlign: "center",
+    backgroundColor: "#fff5f7",
+    borderRadius: 12,
+    padding: 10,
+  },
   saveButton: {
     backgroundColor: "#e75480",
     borderRadius: 12,

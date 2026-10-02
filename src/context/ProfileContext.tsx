@@ -8,12 +8,15 @@ import {
     useEffect,
     useState,
 } from "react";
+import type { Gender } from "@/lib/profileSync";
 
 type Profile = {
   name: string;
   photoUri: string | null;
   birthday: string; // ISO string
   anniversary: string; // ISO string
+  // Absent = not set (profiles saved before this field existed).
+  gender?: Gender;
 };
 
 type ProfileContextValue = {

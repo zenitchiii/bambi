@@ -2,9 +2,11 @@ import { useOnboarding } from "@/context/OnboardingContext";
 import {
     BucketListItem,
     SharedCoupleData,
+    normalizeCycle,
     updateSharedData,
     watchSharedData,
 } from "@/lib/pairing";
+import { formatDateISO } from "@/utils/dateMath";
 import { useCallback, useEffect, useState } from "react";
 
 const DEFAULT: SharedCoupleData = {
@@ -13,6 +15,7 @@ const DEFAULT: SharedCoupleData = {
   customEvents: {},
   lastPoke: null,
   bucketList: [],
+  cycle: { periodStarts: [], periods: [] },
 };
 
 function normalize(data: SharedCoupleData): SharedCoupleData {
@@ -24,6 +27,8 @@ function normalize(data: SharedCoupleData): SharedCoupleData {
     notes: data.notes ?? {},
     customEvents: data.customEvents ?? {},
     bucketList: Array.isArray(data.bucketList) ? data.bucketList : [],
+    // Cyclical timeline needs "today" (future dates are invalid records).
+    cycle: normalizeCycle(data.cycle, formatDateISO(new Date())),
   };
 }
 

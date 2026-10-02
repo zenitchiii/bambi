@@ -1,6 +1,6 @@
 import MediaViewer from "@/components/memories/MediaViewer";
+import MenuButton from "@/components/MenuButton";
 import ScreenContainer from "@/components/ScreenContainer";
-import TabSwipeable from "@/components/TabSwipeable";
 import { formatDateISO } from "@/utils/dateMath";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
@@ -29,6 +29,8 @@ const ITEM_SIZE = (SCREEN_WIDTH - 40 - GRID_GAP * (COLUMNS - 1)) / COLUMNS;
 const FOLDER_GAP = 14;
 const FOLDER_SIZE = (SCREEN_WIDTH - 40 - FOLDER_GAP) / 2;
 const FAVORITES_ALBUM = "__favorites__";
+// Single source for header cluster spacing, reused by headerRow.
+const HEADER_GAP = 8;
 const TODAY = formatDateISO(new Date());
 const MEMORIES_DIR = FileSystem.documentDirectory + "memories/";
 
@@ -331,9 +333,6 @@ export default function MemoriesScreen() {
           ? formatMonthLabel(openMonth)
           : "Memories";
 
-  // Tab swipes stay off while the viewer or any sheet owns the screen.
-  const tabSwipeEnabled = !viewerOpen && !filterVisible && !moveModalVisible;
-
   // ---------- viewer ----------
   const openViewer = (index: number) => {
     setViewerIndex(index);
@@ -505,11 +504,6 @@ export default function MemoriesScreen() {
   // ================= LEVEL 0: Month grid =================
   if (!openMonth && !openAlbum) {
     return (
-      <TabSwipeable
-        onSwipeRight={() => router.push("/calendar")}
-        leftLabel="Calendar"
-        enabled={tabSwipeEnabled}
-      >
         <ScreenContainer contentContainerStyle={{ gap: 16 }}>
         {monthSelection.active ? (
           <View style={styles.headerRow}>
@@ -531,7 +525,10 @@ export default function MemoriesScreen() {
           </View>
         ) : (
           <View style={styles.headerRow}>
-            <Text style={styles.title}>Memories</Text>
+            <View style={styles.headerLeft}>
+              <MenuButton />
+              <Text style={styles.title}>Memories</Text>
+            </View>
             <View style={styles.headerButtons}>
               <Pressable onPress={() => setFilterVisible(true)}>
                 <Text style={styles.headerLink}>
@@ -704,18 +701,12 @@ export default function MemoriesScreen() {
           </Pressable>
         </Modal>
       </ScreenContainer>
-      </TabSwipeable>
     );
   }
 
   // ================= LEVEL 1: Day grid within a month =================
   if (openMonth && !openAlbum) {
     return (
-      <TabSwipeable
-        onSwipeRight={() => router.push("/calendar")}
-        leftLabel="Calendar"
-        enabled={tabSwipeEnabled}
-      >
         <ScreenContainer contentContainerStyle={{ gap: 16 }}>
         {daySelection.active ? (
           <View style={styles.headerRow}>
@@ -737,10 +728,13 @@ export default function MemoriesScreen() {
           </View>
         ) : (
           <View style={styles.headerRow}>
-            <Pressable style={styles.backRow} onPress={closeMonth}>
-              <ChevronLeft color="#e75480" size={22} />
-              <Text style={styles.title}>{formatMonthLabel(openMonth)}</Text>
-            </Pressable>
+            <View style={styles.headerLeft}>
+              <MenuButton />
+              <Pressable style={styles.backRow} onPress={closeMonth}>
+                <ChevronLeft color="#e75480" size={22} />
+                <Text style={styles.title}>{formatMonthLabel(openMonth)}</Text>
+              </Pressable>
+            </View>
           </View>
         )}
 
@@ -828,7 +822,6 @@ export default function MemoriesScreen() {
           onSetCover={() => {}}
         />
       </ScreenContainer>
-      </TabSwipeable>
     );
   }
 
@@ -837,11 +830,6 @@ export default function MemoriesScreen() {
     openAlbum === FAVORITES_ALBUM ? "Favorites" : formatDayLabel(openAlbum!);
 
   return (
-    <TabSwipeable
-      onSwipeRight={() => router.push("/calendar")}
-      leftLabel="Calendar"
-      enabled={tabSwipeEnabled}
-    >
       <ScreenContainer contentContainerStyle={{ gap: 16 }}>
       {itemSelection.active ? (
         <View style={styles.headerRow}>
@@ -863,16 +851,26 @@ export default function MemoriesScreen() {
         </View>
       ) : (
         <View style={styles.headerRow}>
-          <Pressable style={styles.backRow} onPress={closeAlbum}>
-            <ChevronLeft color="#e75480" size={22} />
-            <Text style={styles.title}>{albumTitle}</Text>
-          </Pressable>
-          <View style={styles.headerButtons}>
-            {openAlbum !== FAVORITES_ALBUM && (
-              <Pressable onPress={() => goToCalendarDate(openAlbum!)}>
-                <Text style={styles.headerLink}>View in Calendar</Text>
+          <View style={styles.headerLeft}>
+            <MenuButton />
+            <View style={styles.dayTitleBlock}>
+              <Pressable style={styles.backRow} onPress={closeAlbum}>
+                <ChevronLeft color="#e75480" size={22} />
+                <Text style={styles.title} numberOfLines={1}>
+                  {albumTitle}
+                </Text>
               </Pressable>
-            )}
+              {openAlbum !== FAVORITES_ALBUM && (
+                <Pressable
+                  style={styles.dayLink}
+                  onPress={() => goToCalendarDate(openAlbum!)}
+                >
+                  <Text style={styles.dayLinkText}>View in Calendar</Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+          <View style={styles.headerButtons}>
             {openAlbum !== FAVORITES_ALBUM && (
               <Pressable
                 style={[
@@ -1036,7 +1034,6 @@ export default function MemoriesScreen() {
         </Pressable>
       </Modal>
     </ScreenContainer>
-    </TabSwipeable>
   );
 }
 
@@ -1045,9 +1042,20 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: HEADER_GAP,
   },
+  headerLeft: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  // Day-view title cluster: link sits under the title, title shrinks.
+  dayTitleBlock: { flex: 1, justifyContent: "center" },
+  dayLink: { flexShrink: 0, alignSelf: "flex-start", marginTop: 2 },
+  dayLinkText: { color: "#e75480", fontWeight: "600", fontSize: 12 },
   backRow: { flexDirection: "row", alignItems: "center", gap: 2 },
-  title: { fontSize: 22, fontWeight: "700" },
+  title: { fontSize: 22, fontWeight: "700", flex: 1 },
   headerButtons: { flexDirection: "row", alignItems: "center", gap: 14 },
   addButton: {
     backgroundColor: "#e75480",
@@ -1056,6 +1064,7 @@ const styles = StyleSheet.create({
     height: 40,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   addButtonDisabled: { backgroundColor: "#e7a8ba" },
   selectionActions: { flexDirection: "row", gap: 16 },

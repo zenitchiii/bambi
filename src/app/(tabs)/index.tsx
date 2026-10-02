@@ -1,11 +1,7 @@
-import AboutModal from "@/components/AboutModal";
 import BucketListModal from "@/components/BucketListModal";
-import EditProfileModal from "@/components/EditProfileModal";
-import FutureFeaturesModal from "@/components/FutureFeaturesModal";
+import MenuButton from "@/components/MenuButton";
 import PhotoSlideshow from "@/components/home/PhotoSlideshow";
 import ScreenContainer from "@/components/ScreenContainer";
-import Sidebar from "@/components/Sidebar";
-import TabSwipeable from "@/components/TabSwipeable";
 import { APP_START_DATE } from "@/constants/date";
 import { useProfile } from "@/context/ProfileContext";
 import { usePartnerProfile } from "@/hooks/usePartnerProfile";
@@ -19,10 +15,11 @@ import {
   getYearlyOccurrences,
   getYearlyOccurrencesFromMonthDay,
 } from "@/utils/dateMath";
+import { cap, getPossessive } from "@/utils/pronouns";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { router, useFocusEffect } from "expo-router";
+import { useFocusEffect } from "expo-router";
 import {
   CalendarHeart,
   HandHeart,
@@ -43,10 +40,10 @@ import Animated, {
   withSequence,
   withTiming,
 } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const MEMORIES_KEY = "memories";
 const UPCOMING_WINDOW_DAYS = 30;
-const SIDEBAR_EDGE_WIDTH = 40;
 const [START_YEAR] = APP_START_DATE.split("-").map(Number);
 
 const HERO_HEIGHT = Dimensions.get("window").width;
@@ -63,16 +60,8 @@ export default function HomeScreen() {
     [],
   );
 
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [editProfileOpen, setEditProfileOpen] = useState(false);
-  const [futureFeaturesOpen, setFutureFeaturesOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
   const [bucketOpen, setBucketOpen] = useState(false);
-
-  // The drawer edge swipe lives inside TabSwipeable (onEdgeSwipe) sharing
-  // the pager's single gesture — a separate PanResponder overlay starved
-  // (and was starved by) the pager at the native level, which is why the
-  // drawer stopped opening.
+  const insets = useSafeAreaInsets();
 
   const pokeScale = useSharedValue(1);
   const pokeAnimStyle = useAnimatedStyle(() => ({
@@ -152,7 +141,7 @@ export default function HomeScreen() {
       days: daysUntil(nextYourBirthday),
     },
     nextPartnerBirthday && {
-      label: "Her Birthday",
+      label: `${cap(getPossessive(partner?.gender))} Birthday`,
       days: daysUntil(nextPartnerBirthday),
     },
     ...customEventItems,
@@ -184,19 +173,6 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-      <TabSwipeable
-        onSwipeLeft={() => router.push("/calendar")}
-        rightLabel="Calendar"
-        onEdgeSwipe={() => setSidebarOpen(true)}
-        edgeWidth={SIDEBAR_EDGE_WIDTH}
-        enabled={
-          !sidebarOpen &&
-          !editProfileOpen &&
-          !futureFeaturesOpen &&
-          !aboutOpen &&
-          !bucketOpen
-        }
-      >
         <View style={{ flex: 1 }}>
           <View style={[styles.hero, { height: HERO_HEIGHT }]}>
             <PhotoSlideshow
@@ -208,6 +184,11 @@ export default function HomeScreen() {
               colors={["transparent", "#fff"]}
               style={styles.heroFade}
               pointerEvents="none"
+            />
+            {/* Home has no header row, so the menu floats top-right over the
+                hero — same pink circle as everywhere else. */}
+            <MenuButton
+              style={[styles.menuButton, { top: insets.top + 12 }]}
             />
           </View>
 
@@ -310,37 +291,11 @@ export default function HomeScreen() {
           </View>
         </ScreenContainer>
         </View>
-      </TabSwipeable>
 
-      <Sidebar
-        visible={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        onEditProfile={() => {
-          setSidebarOpen(false);
-          setEditProfileOpen(true);
-        }}
-        onFutureFeatures={() => {
-          setSidebarOpen(false);
-          setFutureFeaturesOpen(true);
-        }}
-        onAbout={() => {
-          setSidebarOpen(false);
-          setAboutOpen(true);
-        }}
-      />
-      <EditProfileModal
-        visible={editProfileOpen}
-        onClose={() => setEditProfileOpen(false)}
-      />
-      <FutureFeaturesModal
-        visible={futureFeaturesOpen}
-        onClose={() => setFutureFeaturesOpen(false)}
-      />
       <BucketListModal
         visible={bucketOpen}
         onClose={() => setBucketOpen(false)}
       />
-      <AboutModal visible={aboutOpen} onClose={() => setAboutOpen(false)} />
     </View>
   );
 }
@@ -366,9 +321,8 @@ const styles = StyleSheet.create({
   menuButton: {
     position: "absolute",
     top: 12,
-    left: 12,
+    left: 16,
     zIndex: 10,
-    padding: 8,
   },
   hero: { width: "100%" },
   heroFade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 30 },

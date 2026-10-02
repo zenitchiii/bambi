@@ -1,8 +1,9 @@
 import ScreenContainer from "@/components/ScreenContainer";
-import TabSwipeable from "@/components/TabSwipeable";
+import MenuButton from "@/components/MenuButton";
 import { APP_START_DATE } from "@/constants/date";
 import { useProfile } from "@/context/ProfileContext";
 import { usePartnerProfile } from "@/hooks/usePartnerProfile";
+import { useCycle } from "@/hooks/useCycle";
 import { useSharedCoupleData } from "@/hooks/useSharedCoupleData";
 import {
   daysUntil,
@@ -12,6 +13,18 @@ import {
   getYearlyOccurrencesFromMonthDay,
 } from "@/utils/dateMath";
 import Holidays from "date-holidays";
+import MonthJumpPicker from "@/components/calendar/MonthJumpPicker";
+import {
+  CALENDAR_THEME,
+  CYCLE_DOT,
+  END_MONTH_INDEX,
+  END_YEAR,
+  FUTURE_RANGE_MONTHS,
+  START_MONTH,
+  START_YEAR,
+  calendarHeaderTextStyle,
+} from "@/components/calendar/calendarTheme";
+import { cap, getPossessive } from "@/utils/pronouns";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -29,12 +42,7 @@ import { CalendarList, DateData } from "react-native-calendars";
 
 const hd = new Holidays("PH");
 const SCREEN_WIDTH = Dimensions.get("window").width;
-const [START_YEAR, START_MONTH] = APP_START_DATE.split("-").map(Number);
 const TODAY = formatDateISO(new Date());
-const FUTURE_RANGE_MONTHS = 60; // 5 years — matches the dateMath default window
-const endDate = new Date(START_YEAR, START_MONTH - 1 + FUTURE_RANGE_MONTHS, 1);
-const END_YEAR = endDate.getFullYear();
-const END_MONTH_INDEX = endDate.getMonth(); // 0-indexed, matches monthIndex in the grid
 
 function getOrdinal(n: number): string {
   const s = ["th", "st", "nd", "rd"];
@@ -132,6 +140,8 @@ export default function CalendarScreen() {
   const partner = usePartnerProfile();
   const { data: shared, update: updateShared } = useSharedCoupleData();
   const { dateNight, notes, customEvents: events } = shared;
+  const { role, marks, stats } = useCycle();
+
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [optionsVisible, setOptionsVisible] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>("options");
@@ -189,7 +199,7 @@ export default function CalendarScreen() {
     if (monthStr === yourMonthStr && dayStr === yourDayStr)
       labels.push("Your birthday");
     if (monthStr === partnerMonthStr && dayStr === partnerDayStr)
-      labels.push("Her birthday");
+      labels.push(`${cap(getPossessive(partner?.gender))} birthday`);
     return labels;
   }, [selectedDate, profile, partner]);
 
@@ -233,6 +243,11 @@ export default function CalendarScreen() {
     setOptionsVisible(true);
   };
   const closeOptions = () => setOptionsVisible(false);
+  const closeMonthPicker = () => setMonthPickerVisible(false);
+  const handlePickMonth = (year: number, monthIndex: number) => {
+    setMonthPickerVisible(false);
+    jumpToMonth(year, monthIndex);
+  };
 
   const handleSetDateNight = () => {
     if (!selectedDate) return;
@@ -294,11 +309,11 @@ export default function CalendarScreen() {
   };
 
   const markedDates = useMemo(() => {
-    const marks: Record<string, any> = {};
+    const dots: Record<string, any> = {};
     const addDot = (date: string, key: string, color: string) => {
       if (date < APP_START_DATE) return;
-      if (!marks[date]) marks[date] = { dots: [] };
-      marks[date].dots.push({ key, color });
+      if (!dots[date]) dots[date] = { dots: [] };
+      dots[date].dots.push({ key, color });
     };
 
     for (let y = START_YEAR; y <= END_YEAR; y++) {
@@ -330,37 +345,31 @@ export default function CalendarScreen() {
     Object.entries(notes).forEach(
       ([d, t]) => t?.trim() && addDot(d, "note", "#b5b5b5"),
     );
+    // Cycle dots ride the same helper: pre-APP_START_DATE dates are skipped
+    // automatically, and multi-dot keeps existing markers intact.
+    marks.logged.forEach((d) => addDot(d, "cycle-logged", CYCLE_DOT.period));
+    marks.projected.forEach((d) => addDot(d, "cycle-projected", CYCLE_DOT.predicted));
+    marks.predicted.forEach((d) => addDot(d, "cycle-predicted", CYCLE_DOT.predicted));
 
     if (selectedDate) {
-      marks[selectedDate] = {
-        ...marks[selectedDate],
+      dots[selectedDate] = {
+        ...dots[selectedDate],
         selected: true,
         selectedColor: "rgba(231,84,128,0.15)",
       };
     }
-    return marks;
-  }, [dateNight, notes, events, selectedDate, profile, partner]);
+    return dots;
+  }, [dateNight, notes, events, selectedDate, profile, partner, marks]);
 
   const dateNightCountdown = dateNight ? daysUntil(dateNight) : null;
 
-  // Shared tab-swipe wiring — spread into each swipe zone below. The month
-  // strip itself is deliberately NOT wrapped: CalendarList already owns
-  // horizontal gestures for month paging, and nesting two horizontal pagers
-  // on one axis would switch tabs on every month swipe.
-  const tabSwipe = {
-    onSwipeLeft: () => router.push("/memories"),
-    onSwipeRight: () => router.push("/"),
-    leftLabel: "Memories",
-    rightLabel: "Home",
-    enabled: !optionsVisible && !monthPickerVisible && !notesListVisible,
-  };
-
   return (
     <ScreenContainer contentContainerStyle={{ gap: 12 }}>
-      <TabSwipeable {...tabSwipe}>
-        <View style={{ gap: 12 }}>
           <View style={styles.headerRow}>
-            <Text style={styles.title}>Our Calendar</Text>
+            <View style={styles.headerLeft}>
+              <MenuButton />
+              <Text style={styles.title}>Our Calendar</Text>
+            </View>
             <View style={styles.headerButtons}>
               <Pressable onPress={handleToday}>
                 <Text style={styles.headerLink}>Today</Text>
@@ -380,8 +389,6 @@ export default function CalendarScreen() {
               </Text>
             </View>
           )}
-        </View>
-      </TabSwipeable>
 
       <CalendarList
         key={calendarKey}
@@ -399,7 +406,7 @@ export default function CalendarScreen() {
         markedDates={markedDates}
         markingType="multi-dot"
         onDayPress={(d: DateData) => setSelectedDate(d.dateString)}
-        theme={{ todayTextColor: "#e75480", arrowColor: "#e75480" }}
+        theme={CALENDAR_THEME}
         renderHeader={(date: any) => {
           const d = new Date(date);
           return (
@@ -409,7 +416,7 @@ export default function CalendarScreen() {
                 setMonthPickerVisible(true);
               }}
             >
-              <Text style={styles.calendarHeaderText}>
+              <Text style={calendarHeaderTextStyle}>
                 {d.toLocaleDateString("en-US", {
                   month: "long",
                   year: "numeric",
@@ -420,7 +427,6 @@ export default function CalendarScreen() {
         }}
       />
 
-      <TabSwipeable {...tabSwipe}>
         <View style={styles.panel}>
         {selectedDate ? (
           <>
@@ -453,6 +459,35 @@ export default function CalendarScreen() {
             >
               {existingNote || 'No note yet — tap "More options" to add one'}
             </Text>
+            {role === "viewer" &&
+              marks.logged.has(selectedDate) && (
+                <>
+                  <Text style={styles.noteLabel}>Cycle</Text>
+                  <Text style={styles.notePreview}>
+                    Period day · shared with you
+                  </Text>
+                </>
+              )}
+            {role === "viewer" &&
+              !marks.logged.has(selectedDate) &&
+              (marks.projected.has(selectedDate) ||
+                (marks.predicted.has(selectedDate) &&
+                  selectedDate >= TODAY)) && (
+                <>
+                  <Text style={styles.noteLabel}>Cycle</Text>
+                  <Text style={styles.notePreview}>Predicted period day</Text>
+                </>
+              )}
+            {role !== "hidden" &&
+              stats.daysUntil !== null &&
+              stats.daysUntil < 0 &&
+              (selectedDate === TODAY ||
+                selectedDate === stats.nextStart) && (
+                <Text style={styles.panelLabel}>
+                  Expected {-stats.daysUntil} day
+                  {-stats.daysUntil === 1 ? "" : "s"} ago
+                </Text>
+              )}
           </>
         ) : (
           <Text style={styles.notePlaceholder}>
@@ -460,7 +495,6 @@ export default function CalendarScreen() {
           </Text>
         )}
         </View>
-      </TabSwipeable>
 
       <Modal
         visible={optionsVisible}
@@ -558,85 +592,13 @@ export default function CalendarScreen() {
         </Pressable>
       </Modal>
 
-      <Modal
+      <MonthJumpPicker
         visible={monthPickerVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setMonthPickerVisible(false)}
-      >
-        <Pressable
-          style={styles.overlay}
-          onPress={() => setMonthPickerVisible(false)}
-        >
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetDate}>Jump to month</Text>
-            <View style={styles.pickerRow}>
-              <Pressable
-                disabled={pickerYear <= START_YEAR}
-                onPress={() => setPickerYear((y) => y - 1)}
-              >
-                <Text
-                  style={[
-                    styles.pickerArrow,
-                    pickerYear <= START_YEAR && styles.pickerArrowDisabled,
-                  ]}
-                >
-                  ‹
-                </Text>
-              </Pressable>
-              <Text style={styles.pickerYear}>{pickerYear}</Text>
-              <Pressable
-                disabled={pickerYear >= END_YEAR}
-                onPress={() => setPickerYear((y) => y + 1)}
-              >
-                <Text
-                  style={[
-                    styles.pickerArrow,
-                    pickerYear >= END_YEAR && styles.pickerArrowDisabled,
-                  ]}
-                >
-                  ›
-                </Text>
-              </Pressable>
-            </View>
-            <View style={styles.monthGrid}>
-              {Array.from({ length: 12 }, (_, i) => i).map((monthIndex) => {
-                const beforeStart =
-                  pickerYear === START_YEAR && monthIndex < START_MONTH - 1;
-                const afterEnd =
-                  pickerYear === END_YEAR && monthIndex > END_MONTH_INDEX;
-                const isDisabled = beforeStart || afterEnd;
-                return (
-                  <Pressable
-                    key={monthIndex}
-                    disabled={isDisabled}
-                    style={[
-                      styles.monthCell,
-                      isDisabled && styles.monthCellDisabled,
-                    ]}
-                    onPress={() => {
-                      setMonthPickerVisible(false);
-                      jumpToMonth(pickerYear, monthIndex);
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.monthCellText,
-                        isDisabled && styles.monthCellTextDisabled,
-                      ]}
-                    >
-                      {new Date(2000, monthIndex, 1).toLocaleDateString(
-                        "en-US",
-                        { month: "short" },
-                      )}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        year={pickerYear}
+        onYearChange={setPickerYear}
+        onPickMonth={handlePickMonth}
+        onClose={closeMonthPicker}
+      />
 
       <Modal
         visible={notesListVisible}
@@ -696,6 +658,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
+  headerLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
   headerButtons: { flexDirection: "row", gap: 16 },
   headerLink: { color: "#e75480", fontWeight: "600", fontSize: 13 },
   countdownBanner: {
@@ -725,13 +688,6 @@ const styles = StyleSheet.create({
   noteLabel: { fontSize: 12, color: "#999", fontWeight: "600", marginTop: 4 },
   notePreview: { fontSize: 14, color: "#444" },
   notePlaceholder: { fontSize: 14, color: "#bbb", fontStyle: "italic" },
-  calendarHeaderText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#e75480",
-    textAlign: "center",
-    paddingVertical: 8,
-  },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -774,31 +730,6 @@ const styles = StyleSheet.create({
   noteActionsRow: { flexDirection: "row", gap: 16, marginTop: 4 },
   linkText: { color: "#6bb9d6", fontWeight: "600" },
   removeText: { color: "#d9534f", fontWeight: "600" },
-  pickerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 24,
-  },
-  pickerArrow: { fontSize: 28, color: "#e75480", paddingHorizontal: 12 },
-  pickerArrowDisabled: { color: "#ddd" },
-  pickerYear: { fontSize: 18, fontWeight: "700" },
-  monthGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    justifyContent: "space-between",
-  },
-  monthCell: {
-    width: "30%",
-    backgroundColor: "#fff5f7",
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  monthCellDisabled: { backgroundColor: "#f5f5f5" },
-  monthCellText: { fontWeight: "600", color: "#e75480" },
-  monthCellTextDisabled: { color: "#ccc" },
   noteListItem: {
     paddingVertical: 10,
     borderBottomWidth: 1,

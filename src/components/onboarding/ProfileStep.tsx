@@ -1,7 +1,7 @@
 import { useOnboarding } from "@/context/OnboardingContext";
 import { useProfile } from "@/context/ProfileContext";
 import { COUPLE_ID_KEY, ensureSignedIn, isMemberA } from "@/lib/pairing";
-import { syncProfile } from "@/lib/profileSync";
+import { syncProfile, type Gender } from "@/lib/profileSync";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -17,6 +17,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import GenderPicker from "@/components/GenderPicker";
 
 type Props = { onNext: () => void };
 type PickerTarget = "birthday" | "anniversary" | null;
@@ -29,6 +30,7 @@ export default function ProfileStep(_: Props) {
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [birthday, setBirthday] = useState<Date | null>(null);
   const [anniversary, setAnniversary] = useState<Date | null>(null);
+  const [gender, setGender] = useState<Gender | null>(null);
   const [activePicker, setActivePicker] = useState<PickerTarget>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +80,10 @@ export default function ProfileStep(_: Props) {
       setError("Pick both your birthday and your anniversary date.");
       return;
     }
+    if (!gender) {
+      setError("Choose an option so cycle tracking knows who logs.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -92,6 +98,7 @@ export default function ProfileStep(_: Props) {
           photoUri,
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
+          gender,
         }),
       );
       if (coupleId) {
@@ -100,6 +107,7 @@ export default function ProfileStep(_: Props) {
           name: name.trim(),
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
+          gender,
         });
       }
       await refreshStatus(); // flips status to "onboarded" — root layout swaps to tabs automatically
@@ -151,6 +159,8 @@ export default function ProfileStep(_: Props) {
             : "Set your anniversary"}
         </Text>
       </Pressable>
+
+      <GenderPicker value={gender} onChange={setGender} />
 
       {activePicker && (
         <DateTimePicker

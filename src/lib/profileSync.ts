@@ -1,10 +1,14 @@
 import { db } from "@/lib/firebase";
 import { doc, onSnapshot, setDoc } from "firebase/firestore";
 
+export type Gender = "woman" | "man";
+
 export type SyncedProfile = {
   name: string;
   birthday: string;
   anniversary: string;
+  // Absent = not set (profiles synced before this field existed).
+  gender?: Gender;
 };
 
 export async function syncProfile(
