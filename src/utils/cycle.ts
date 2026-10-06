@@ -335,20 +335,16 @@ export type Phase =
   | "luteal"
   | "late";
 
-export type PregnancyChance = "low" | "medium" | "high" | "unsure";
-
 export interface FertilityInfo {
   ovulationDay: string | null;
   fertileStart: string | null;
   fertileEnd: string | null;
   phase: Phase | null;
   cycleDay: number | null;
-  rough: boolean;
-  pregnancyChance: PregnancyChance;
 }
 
-// Valid start-to-start gaps, oldest first. Single definition shared by the
-// average and the confidence check below.
+// Valid start-to-start gaps, oldest first. Single definition for the
+// average below.
 function validGaps(periods: CyclePeriod[]): number[] {
   const starts = sortedValid(periods).map((p) => p.start);
   const gaps: number[] = [];
@@ -411,19 +407,14 @@ export function getPhase(
   return "follicular";
 }
 
-// Full fertility picture for one day (usually today). Rough when fewer
-// than 3 valid gaps exist or they spread more than 7 days — then the
-// chance reads "unsure" no matter the distance.
+// Fertile window and ovulation for one day (usually today), derived from
+// the predicted start. Calendars and the panel read this; no confidence
+// grading lives here.
 export function getFertility(
   periods: CyclePeriod[],
   todayISO: string,
 ): FertilityInfo {
   const stats = deriveStats(periods, todayISO);
-  const gaps = validGaps(periods);
-  const recent = gaps.slice(-6);
-  const rough =
-    recent.length < 3 ||
-    Math.max(...recent) - Math.min(...recent) > 7;
   if (stats.nextStart === null) {
     return {
       ovulationDay: null,
@@ -431,29 +422,15 @@ export function getFertility(
       fertileEnd: null,
       phase: getPhase(periods, todayISO, todayISO),
       cycleDay: getCycleDay(periods, todayISO),
-      rough: true,
-      pregnancyChance: "unsure",
     };
   }
   const ovN = toDayNumber(stats.nextStart) - LUTEAL_DAYS;
-  const dist = Math.abs(toDayNumber(todayISO) - ovN);
-  const inWindow =
-    todayISO >= fromDayNumber(ovN - FERTILE_BEFORE_OVULATION) &&
-    todayISO <= fromDayNumber(ovN + FERTILE_AFTER_OVULATION);
   return {
     ovulationDay: fromDayNumber(ovN),
     fertileStart: fromDayNumber(ovN - FERTILE_BEFORE_OVULATION),
     fertileEnd: fromDayNumber(ovN + FERTILE_AFTER_OVULATION),
     phase: getPhase(periods, todayISO, todayISO),
     cycleDay: getCycleDay(periods, todayISO),
-    rough,
-    pregnancyChance: rough
-      ? "unsure"
-      : dist <= 1
-        ? "high"
-        : inWindow
-          ? "medium"
-          : "low",
   };
 }
 export interface CycleStats {
@@ -497,6 +474,42 @@ export function deriveStats(
         ? null
         : toDayNumber(nextStart) - toDayNumber(todayISO),
   };
+}
+
+// One label for the partner countdown, shared by Home and Calendar so the
+// text is identical everywhere. `who` is "Her"/"Your" (via getPossessive,
+// so "Their" works later with no call-site changes). Null when unpredictable.
+export function formatPeriodCountdown(
+  daysUntil: number | null,
+  who: string,
+): string | null {
+  if (daysUntil === null) return null;
+  if (daysUntil < 0)
+    return `${who} next period may be late by ${-daysUntil} day${-daysUntil === 1 ? "" : "s"}`;
+  if (daysUntil === 0) return `${who} next period starts today`;
+  if (daysUntil === 1) return `${who} next period is tomorrow`;
+  return `${who} next period in ${daysUntil} days`;
+}
+
+// Read-only one-liner for a tapped date, shared by the Calendar day panel
+// and its More-options sheet. Null when there is nothing to say (no data,
+// or a date with no phase). Never written anywhere — display only.
+export function cycleNoteForDate(
+  dateISO: string,
+  marks: CycleMarks,
+  periods: CyclePeriod[],
+  todayISO: string,
+  who: string,
+): string | null {
+  const st = marks.status.get(dateISO);
+  if (st?.kind === "period") return `${who} period (day ${st.day})`;
+  if (st) return `${who} predicted period`;
+  const ph = getPhase(periods, dateISO, todayISO);
+  if (ph === "ovulation") return "Ovulation day";
+  if (ph === "fertile") return `${who} fertile window`;
+  if (ph === "follicular" || ph === "luteal") return `${who} ${ph} phase`;
+  if (ph === "late") return `${who} period is late`;
+  return null;
 }
 
 export interface DayStatus {

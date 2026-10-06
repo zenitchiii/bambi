@@ -1,4 +1,5 @@
 import SplashScreenView, { SPLASH_MIN_MS } from "@/components/SplashScreenView";
+import { CoupleDataProvider } from "@/context/CoupleDataContext";
 import { OnboardingProvider, useOnboarding } from "@/context/OnboardingContext";
 import { ProfileProvider } from "@/context/ProfileContext";
 import Constants, { AppOwnership } from "expo-constants";
@@ -46,9 +47,11 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <OnboardingProvider>
-        <ProfileProvider>
-          <RootNavigator />
-        </ProfileProvider>
+        <CoupleDataProvider>
+          <ProfileProvider>
+            <RootNavigator />
+          </ProfileProvider>
+        </CoupleDataProvider>
       </OnboardingProvider>
     </GestureHandlerRootView>
   );

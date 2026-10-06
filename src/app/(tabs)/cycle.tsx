@@ -13,7 +13,6 @@ import { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import {
   Circle,
   Line,
-  Path,
   Rect,
   Svg,
   Text as SvgText,
@@ -278,29 +277,6 @@ export default function CycleScreen() {
       cycleDay: fertility.cycleDay,
     };
   }, [barW, periods, stats, fertility, today]);
-
-  // Bell curve over the fertile window. Pure viewBox geometry (no measurement
-  // needed): x maps ovulation ±8 days, y is a gaussian bell.
-  const bell = useMemo(() => {
-    if (!fertility.ovulationDay) return null;
-    const W = 300;
-    const BASE = 78;
-    const AMP = 62;
-    const SIGMA = 2.2;
-    const RANGE = 8;
-    const N = 25;
-    const x = (offset: number) =>
-      8 + ((offset + RANGE) / (2 * RANGE)) * (W - 16);
-    let d = "";
-    for (let i = 0; i < N; i++) {
-      const off = -RANGE + (i / (N - 1)) * 2 * RANGE;
-      const y = BASE - AMP * Math.exp(-(off * off) / (2 * SIGMA * SIGMA));
-      d += `${i === 0 ? "M" : "L"}${x(off).toFixed(1)},${y.toFixed(1)} `;
-    }
-    const tOff =
-      toDayNumber_(today) - toDayNumber_(fertility.ovulationDay);
-    return { d: d.trim(), tx: Math.min(W - 4, Math.max(4, x(tOff))) };
-  }, [fertility, today]);
 
   const onBarLayout = useCallback(
     (e: { nativeEvent: { layout: { width: number } } }) => {
@@ -689,14 +665,6 @@ export default function CycleScreen() {
     }
   }, [panel.secondary2Kind, actions, selectedISO, periods, openEndPicker]);
 
-  const chance = fertility.pregnancyChance;
-  const chanceColor =
-    chance === "high"
-      ? PERIOD_RED
-      : chance === "medium"
-        ? OVULATION_ORANGE
-        : "#999";
-
   const showPanel = !bothWoman && view === "calendar";
 
   return (
@@ -905,44 +873,6 @@ export default function CycleScreen() {
               </View>
             )}
 
-            <View style={styles.card}>
-              <View style={styles.chanceRow}>
-                <Text style={styles.cardTitle}>Pregnancy chance</Text>
-                <Text style={[styles.chanceLabel, { color: chanceColor }]}>
-                  {chance === "unsure"
-                    ? "Unsure"
-                    : chance[0].toUpperCase() + chance.slice(1)}
-                </Text>
-              </View>
-              {bell && (
-                <Svg
-                  width="100%"
-                  height={84}
-                  viewBox="0 0 300 84"
-                  preserveAspectRatio="none"
-                >
-                  <Path
-                    d={`${bell.d} L296,84 L4,84 Z`}
-                    fill="#ffd9e6"
-                    fillOpacity={0.55}
-                    stroke="#e75480"
-                    strokeWidth={2}
-                  />
-                  <Line
-                    x1={bell.tx}
-                    y1={6}
-                    x2={bell.tx}
-                    y2={78}
-                    stroke="#e75480"
-                    strokeWidth={2}
-                  />
-                </Svg>
-              )}
-              <Text style={styles.disclaimer}>
-                Estimates only. Not birth control or medical advice.
-              </Text>
-            </View>
-
             {canEdit && (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Manage</Text>
@@ -1051,13 +981,6 @@ const styles = StyleSheet.create({
   cardHint: { fontSize: 14, color: "#999", textAlign: "center" },
   phaseMessage: { fontSize: 14, color: "#333", lineHeight: 20 },
   barWrap: { paddingTop: 4 },
-  chanceRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  chanceLabel: { fontSize: 16, fontWeight: "700" },
-  disclaimer: { fontSize: 12, color: "#999", textAlign: "center" },
   primaryButton: {
     backgroundColor: "#e75480",
     borderRadius: 12,

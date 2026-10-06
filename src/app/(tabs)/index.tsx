@@ -1,11 +1,15 @@
 import BucketListModal from "@/components/BucketListModal";
-import MenuButton from "@/components/MenuButton";
+import { CYCLE_DOT } from "@/components/calendar/calendarTheme";
 import PhotoSlideshow from "@/components/home/PhotoSlideshow";
+import MenuButton from "@/components/MenuButton";
 import ScreenContainer from "@/components/ScreenContainer";
 import { APP_START_DATE } from "@/constants/date";
 import { useProfile } from "@/context/ProfileContext";
+import { useCycle } from "@/hooks/useCycle";
+import { canSeeCycle } from "@/hooks/useCycleRole";
 import { usePartnerProfile } from "@/hooks/usePartnerProfile";
 import { useSharedCoupleData } from "@/hooks/useSharedCoupleData";
+import { formatPeriodCountdown } from "@/utils/cycle";
 import {
   daysUntil,
   formatDateISO,
@@ -26,14 +30,8 @@ import {
   Heart,
   HeartHandshake,
 } from "lucide-react-native";
-import { useCallback, useState } from "react";
-import {
-  Dimensions,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { Dimensions, Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -44,6 +42,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const MEMORIES_KEY = "memories";
 const UPCOMING_WINDOW_DAYS = 30;
+// DEV-ONLY: true previews Home as the man (viewer) sees it with one
+// account. Inert in production (__DEV__ is false in release builds).
+const DEBUG_FORCE_VIEWER = false;
 const [START_YEAR] = APP_START_DATE.split("-").map(Number);
 
 const HERO_HEIGHT = Dimensions.get("window").width;
@@ -53,6 +54,7 @@ export default function HomeScreen() {
   const partner = usePartnerProfile();
 
   const { data: shared, update: updateShared } = useSharedCoupleData();
+  const { role: cycleRole, stats: cycleStats } = useCycle();
   const { dateNight, customEvents, lastPoke, bucketList } = shared;
   const bucketItems = bucketList ?? [];
   const bucketDone = bucketItems.filter((i) => i.completed).length;
@@ -98,19 +100,31 @@ export default function HomeScreen() {
     }, []),
   );
 
-  if (!profile) return null;
+  // Null-safe: every hook below must run on every render (React rule),
+  // so the early return lives after them; guards yield nulls until loaded.
+  const yourBirthday = profile
+    ? formatDateISO(new Date(profile.birthday))
+    : null;
+  const anniversaryDate = profile
+    ? formatDateISO(new Date(profile.anniversary))
+    : null;
 
-  const yourBirthday = formatDateISO(new Date(profile.birthday));
-  const anniversaryDate = formatDateISO(new Date(profile.anniversary));
+  const { years, months, days } = anniversaryDate
+    ? getMonthsAndDays(anniversaryDate)
+    : { years: 0, months: 0, days: 0 };
 
-  const { years, months, days } = getMonthsAndDays(anniversaryDate);
-
-  const nextMonthsary = getNextOccurrence(
-    getMonthsaryOccurrences(anniversaryDate).filter((d) => d >= APP_START_DATE),
-  );
-  const nextYourBirthday = getNextOccurrence(
-    getYearlyOccurrences(yourBirthday).filter((d) => d >= APP_START_DATE),
-  );
+  const nextMonthsary = anniversaryDate
+    ? getNextOccurrence(
+        getMonthsaryOccurrences(anniversaryDate).filter(
+          (d) => d >= APP_START_DATE,
+        ),
+      )
+    : null;
+  const nextYourBirthday = yourBirthday
+    ? getNextOccurrence(
+        getYearlyOccurrences(yourBirthday).filter((d) => d >= APP_START_DATE),
+      )
+    : null;
   const nextPartnerBirthday = partner
     ? getNextOccurrence(
         getYearlyOccurrences(formatDateISO(new Date(partner.birthday))).filter(
@@ -130,29 +144,56 @@ export default function HomeScreen() {
     })
     .filter((item): item is { label: string; days: number } => !!item);
 
-  const upcoming = [
-    dateNight && { label: "Next Date", days: daysUntil(dateNight) },
-    nextMonthsary && {
-      label: "Next Monthsary",
-      days: daysUntil(nextMonthsary),
-    },
-    nextYourBirthday && {
-      label: "Your Birthday",
-      days: daysUntil(nextYourBirthday),
-    },
-    nextPartnerBirthday && {
-      label: `${cap(getPossessive(partner?.gender))} Birthday`,
-      days: daysUntil(nextPartnerBirthday),
-    },
-    ...customEventItems,
-  ].filter(
-    (item): item is { label: string; days: number } =>
-      !!item &&
-      typeof item.label === "string" &&
-      item.label.trim() !== "" &&
-      item.days >= 0 &&
-      item.days <= UPCOMING_WINDOW_DAYS,
-  );
+  // One memo for the whole list: role gates only the RESULT (never hooks),
+  // so hidden/loading shows nothing and never flashes. No state/effects.
+  const allUpcoming = useMemo(() => {
+    const upcoming = [
+      dateNight && { label: "Next Date", days: daysUntil(dateNight) },
+      nextMonthsary && {
+        label: "Next Monthsary",
+        days: daysUntil(nextMonthsary),
+      },
+      nextYourBirthday && {
+        label: "Your Birthday",
+        days: daysUntil(nextYourBirthday),
+      },
+      nextPartnerBirthday && {
+        label: `${cap(getPossessive(partner?.gender))} Birthday`,
+        days: daysUntil(nextPartnerBirthday),
+      },
+      ...customEventItems,
+    ].filter(
+      (
+        item,
+      ): item is {
+        label: string;
+        days: number;
+        full?: string;
+        cycle?: boolean;
+      } =>
+        !!item &&
+        typeof item.label === "string" &&
+        item.label.trim() !== "" &&
+        item.days >= 0 &&
+        item.days <= UPCOMING_WINDOW_DAYS,
+    );
+
+    // Both partners see the countdown (edit rights are separate); hidden
+    // and loading show nothing. Window: inside 30 days, or late/today.
+    // "Your" for her own cycle, otherwise the partner's pronoun ("Her").
+    const viewRole = DEBUG_FORCE_VIEWER && __DEV__ ? "viewer" : cycleRole;
+    const days = cycleStats.daysUntil;
+    const who =
+      viewRole === "owner" ? "Your" : cap(getPossessive(partner?.gender));
+    const label =
+      canSeeCycle(viewRole) && days !== null && days <= 30
+        ? formatPeriodCountdown(days, who)
+        : null;
+    if (label === null || days === null) return upcoming;
+    return [...upcoming, { label: "Period", days, full: label, cycle: true }];
+  }, [profile, partner, dateNight, customEvents, cycleRole, cycleStats]);
+
+  if (!profile) return null;
 
   const sendPoke = () => {
     pokeScale.value = withSequence(
@@ -173,26 +214,24 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-        <View style={{ flex: 1 }}>
-          <View style={[styles.hero, { height: HERO_HEIGHT }]}>
-            <PhotoSlideshow
-              height={HERO_HEIGHT}
-              rounded={false}
-              style={StyleSheet.absoluteFill}
-            />
-            <LinearGradient
-              colors={["transparent", "#fff"]}
-              style={styles.heroFade}
-              pointerEvents="none"
-            />
-            {/* Home has no header row, so the menu floats top-right over the
+      <View style={{ flex: 1 }}>
+        <View style={[styles.hero, { height: HERO_HEIGHT }]}>
+          <PhotoSlideshow
+            height={HERO_HEIGHT}
+            rounded={false}
+            style={StyleSheet.absoluteFill}
+          />
+          <LinearGradient
+            colors={["transparent", "#fff"]}
+            style={styles.heroFade}
+            pointerEvents="none"
+          />
+          {/* Home has no header row, so the menu floats top-right over the
                 hero — same pink circle as everywhere else. */}
-            <MenuButton
-              style={[styles.menuButton, { top: insets.top + 12 }]}
-            />
-          </View>
+          <MenuButton style={[styles.menuButton, { top: insets.top + 12 }]} />
+        </View>
 
-          <ScreenContainer>
+        <ScreenContainer>
           <View style={[styles.card, styles.topCard]}>
             <CalendarHeart color="#e75480" size={28} />
             <Text style={styles.cardTitle}>Together for</Text>
@@ -218,25 +257,37 @@ export default function HomeScreen() {
           <View style={styles.card}>
             <Heart color="#e75480" size={28} />
             <Text style={styles.cardTitle}>Coming up this month</Text>
-            {upcoming.length === 0 ? (
+            {allUpcoming.length === 0 ? (
               <Text style={styles.cardHint}>
                 Nothing in the next {UPCOMING_WINDOW_DAYS} days
               </Text>
             ) : (
-              upcoming
+              [...allUpcoming]
                 .sort((a, b) => a.days - b.days)
                 .map((item) => {
                   if (!item.label?.trim()) return null;
+                  const text =
+                    item.full ??
+                    (item.days === 0
+                      ? `${item.label} today`
+                      : `${item.label} in ${item.days} day${item.days === 1 ? "" : "s"}`);
+                  if (!item.cycle) {
+                    return (
+                      <Text
+                        key={`${item.label}-${item.days}`}
+                        style={styles.upcomingRow}
+                      >
+                        {text}
+                      </Text>
+                    );
+                  }
                   return (
-                    <Text
+                    <View
                       key={`${item.label}-${item.days}`}
-                      style={styles.upcomingRow}
+                      style={styles.upcomingCycleRow}
                     >
-                      {item.label} —{" "}
-                      {item.days === 0
-                        ? "today"
-                        : `${item.days} day${item.days === 1 ? "" : "s"}`}
-                    </Text>
+                      <Text style={styles.upcomingRow}>{text}</Text>
+                    </View>
                   );
                 })
             )}
@@ -290,7 +341,7 @@ export default function HomeScreen() {
             </View>
           </View>
         </ScreenContainer>
-        </View>
+      </View>
 
       <BucketListModal
         visible={bucketOpen}
@@ -308,6 +359,18 @@ const styles = StyleSheet.create({
   cardBig: { fontSize: 20, fontWeight: "600", marginTop: 2 },
   cardHint: { fontSize: 12, color: "#aaa" },
   upcomingRow: { fontSize: 15, fontWeight: "600", marginTop: 2 },
+  upcomingCycleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 2,
+  },
+  upcomingCycleDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: CYCLE_DOT.period,
+  },
   bucketTrack: {
     flexDirection: "row",
     height: 8,

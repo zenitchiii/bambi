@@ -15,6 +15,7 @@ import { normalizePeriods, pruneLogs } from "@/utils/cycle";
 import type { CycleLog, CyclePeriod } from "@/utils/cycle";
 export type { CycleLog, CyclePeriod } from "@/utils/cycle";
 import { formatDateISO } from "@/utils/dateMath";
+import type { SyncedProfile } from "@/lib/profileSync";
 
 const COUPLE_ID_KEY = "coupleId";
 
@@ -48,6 +49,12 @@ export type SharedCoupleData = {
   lastPoke: number | null;
   bucketList: BucketListItem[];
   cycle: CycleData;
+  // Identity slots from the couple doc (read-only locally; writers never
+  // send these — update() only writes the explicit partial it receives).
+  memberA: string | null;
+  memberB: string | null;
+  profileA: SyncedProfile | null;
+  profileB: SyncedProfile | null;
 };
 
 const DEFAULT_SHARED_DATA: SharedCoupleData = {
@@ -57,6 +64,10 @@ const DEFAULT_SHARED_DATA: SharedCoupleData = {
   lastPoke: null,
   bucketList: [],
   cycle: { periodStarts: [], periods: [] },
+  memberA: null,
+  memberB: null,
+  profileA: null,
+  profileB: null,
 };
 
 export async function updateSharedData(

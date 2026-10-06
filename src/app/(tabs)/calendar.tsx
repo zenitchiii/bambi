@@ -23,10 +23,13 @@ import {
   START_MONTH,
   START_YEAR,
   calendarHeaderTextStyle,
+  monthDiffMonths,
+  parseLocalDate,
 } from "@/components/calendar/calendarTheme";
 import { cap, getPossessive } from "@/utils/pronouns";
-import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { cycleNoteForDate, fromDayNumber_, toDayNumber_ } from "@/utils/cycle";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Dimensions,
@@ -42,7 +45,6 @@ import { CalendarList, DateData } from "react-native-calendars";
 
 const hd = new Holidays("PH");
 const SCREEN_WIDTH = Dimensions.get("window").width;
-const TODAY = formatDateISO(new Date());
 
 function getOrdinal(n: number): string {
   const s = ["th", "st", "nd", "rd"];
@@ -140,7 +142,7 @@ export default function CalendarScreen() {
   const partner = usePartnerProfile();
   const { data: shared, update: updateShared } = useSharedCoupleData();
   const { dateNight, notes, customEvents: events } = shared;
-  const { role, marks, stats } = useCycle();
+  const { role, periods, marks, stats, fertility } = useCycle();
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [optionsVisible, setOptionsVisible] = useState(false);
@@ -152,11 +154,24 @@ export default function CalendarScreen() {
   const [pickerYear, setPickerYear] = useState(START_YEAR);
   const [calendarKey, setCalendarKey] = useState(0);
   const params = useLocalSearchParams<{ date?: string }>();
+  // Computed once: today (local, never UTC) is the initial page; the past
+  // range bridges APP_START_DATE -> today. Cause of the bug: current was
+  // APP_START_DATE with pastScrollRange 0, so index 0 (September) opened.
+  const { today, pastRange, futureRange } = useMemo(() => {
+    const t = formatDateISO(new Date());
+    const [y, m] = t.split("-").map(Number);
+    const past = Math.max(0, monthDiffMonths(APP_START_DATE, y, m - 1));
+    return {
+      today: t,
+      pastRange: past,
+      futureRange: Math.max(0, FUTURE_RANGE_MONTHS - past),
+    };
+  }, []);
   const isDateNight = selectedDate === dateNight && selectedDate !== null;
   const existingNote = selectedDate ? notes[selectedDate] : undefined;
   const monthDay = selectedDate?.slice(5) ?? null;
   const existingEvent = monthDay ? events[monthDay] : undefined;
-  const isFutureDate = !!selectedDate && selectedDate > TODAY;
+  const isFutureDate = !!selectedDate && selectedDate > today;
 
   const holidayName = useMemo(() => {
     if (!selectedDate) return null;
@@ -230,10 +245,19 @@ export default function CalendarScreen() {
     }
   }, [params.date]);
 
+  // Tabs stay mounted, so the grid keeps its scroll position across tab
+  // switches — re-land on today at each focus ("Today" button stays for
+  // manual jumps). Ref only, no new state; the key is untouched (no remount).
+  useFocusEffect(
+    useCallback(() => {
+      calendarRef.current?.scrollToMonth(parseLocalDate(today));
+    }, [today]),
+  );
+
   const handleToday = () => {
-    const now = new Date();
-    jumpToMonth(now.getFullYear(), now.getMonth());
-    setSelectedDate(TODAY);
+    const [y, m] = today.split("-").map(Number);
+    jumpToMonth(y, m - 1);
+    setSelectedDate(today);
   };
 
   const openOptions = () => {
@@ -295,6 +319,20 @@ export default function CalendarScreen() {
     closeOptions();
   };
 
+  // Man's side only, read-only: one shared line for the tapped date,
+  // shown in the day panel and the More-options sheet. Display only —
+  // never written into notes.
+  const cycleNote = useMemo(() => {
+    if (role !== "viewer" || !selectedDate) return null;
+    return cycleNoteForDate(
+      selectedDate,
+      marks,
+      periods,
+      today,
+      cap(getPossessive(partner?.gender)),
+    );
+  }, [role, selectedDate, marks, periods, partner, today]);
+
   const handleAddMemory = () => {
     if (!selectedDate) return;
     if (isFutureDate) {
@@ -307,6 +345,32 @@ export default function CalendarScreen() {
     closeOptions();
     router.push({ pathname: "/memories", params: { date: selectedDate } });
   };
+
+  // Viewer-only cycle dots, built once (period > predicted > ovulation >
+  // fertile, first wins so each day carries at most one cycle dot).
+  // Owner sees none here — she has the full calendar in her Cycle tab.
+  // Iterates mark sets, never whole ranges.
+  const cycleDots = useMemo(() => {
+    const map = new Map<string, { key: string; color: string }>();
+    if (role !== "viewer") return map;
+    const add = (date: string, key: string, color: string) => {
+      if (date < APP_START_DATE || map.has(date)) return;
+      map.set(date, { key, color });
+    };
+    marks.logged.forEach((d) => add(d, "cycle-logged", CYCLE_DOT.period));
+    marks.projected.forEach((d) => add(d, "cycle-projected", CYCLE_DOT.predicted));
+    marks.predicted.forEach((d) => add(d, "cycle-predicted", CYCLE_DOT.predicted));
+    if (fertility.ovulationDay) {
+      add(fertility.ovulationDay, "cycle-ovulation", CYCLE_DOT.ovulation);
+    }
+    if (fertility.fertileStart && fertility.fertileEnd) {
+      const endN = toDayNumber_(fertility.fertileEnd);
+      for (let n = toDayNumber_(fertility.fertileStart); n <= endN; n++) {
+        add(fromDayNumber_(n), "cycle-fertile", CYCLE_DOT.fertile);
+      }
+    }
+    return map;
+  }, [role, marks, fertility]);
 
   const markedDates = useMemo(() => {
     const dots: Record<string, any> = {};
@@ -345,11 +409,9 @@ export default function CalendarScreen() {
     Object.entries(notes).forEach(
       ([d, t]) => t?.trim() && addDot(d, "note", "#b5b5b5"),
     );
-    // Cycle dots ride the same helper: pre-APP_START_DATE dates are skipped
-    // automatically, and multi-dot keeps existing markers intact.
-    marks.logged.forEach((d) => addDot(d, "cycle-logged", CYCLE_DOT.period));
-    marks.projected.forEach((d) => addDot(d, "cycle-projected", CYCLE_DOT.predicted));
-    marks.predicted.forEach((d) => addDot(d, "cycle-predicted", CYCLE_DOT.predicted));
+    // Cycle dots merge into the same helper (multi-dot keeps the other
+    // markers); pre-APP_START_DATE dates are skipped automatically.
+    cycleDots.forEach(({ key, color }, d) => addDot(d, key, color));
 
     if (selectedDate) {
       dots[selectedDate] = {
@@ -359,7 +421,7 @@ export default function CalendarScreen() {
       };
     }
     return dots;
-  }, [dateNight, notes, events, selectedDate, profile, partner, marks]);
+  }, [dateNight, notes, events, selectedDate, profile, partner, cycleDots]);
 
   const dateNightCountdown = dateNight ? daysUntil(dateNight) : null;
 
@@ -393,9 +455,9 @@ export default function CalendarScreen() {
       <CalendarList
         key={calendarKey}
         ref={calendarRef}
-        current={APP_START_DATE}
-        pastScrollRange={0}
-        futureScrollRange={FUTURE_RANGE_MONTHS}
+        current={today}
+        pastScrollRange={pastRange}
+        futureScrollRange={futureRange}
         windowSize={21}
         horizontal
         pagingEnabled
@@ -427,6 +489,27 @@ export default function CalendarScreen() {
         }}
       />
 
+      {role === "viewer" && (
+        <View style={styles.legend}>
+          <View style={styles.legendRow}>
+            <View style={styles.legendPeriod} />
+            <Text style={styles.legendText}>Period</Text>
+          </View>
+          <View style={styles.legendRow}>
+            <View style={styles.legendPredicted} />
+            <Text style={styles.legendText}>Predicted period</Text>
+          </View>
+          <View style={styles.legendRow}>
+            <View style={styles.legendFertile} />
+            <Text style={styles.legendText}>Fertile window</Text>
+          </View>
+          <View style={styles.legendRow}>
+            <View style={styles.legendOvulation} />
+            <Text style={styles.legendText}>Ovulation day</Text>
+          </View>
+        </View>
+      )}
+
         <View style={styles.panel}>
         {selectedDate ? (
           <>
@@ -453,35 +536,22 @@ export default function CalendarScreen() {
                 <Text style={styles.notePreview}>{existingEvent}</Text>
               </>
             )}
+            {cycleNote && (
+              <>
+                <Text style={styles.noteLabel}>Cycle</Text>
+                <Text style={styles.notePreview}>{cycleNote}</Text>
+              </>
+            )}
             <Text style={styles.noteLabel}>Note</Text>
             <Text
               style={existingNote ? styles.notePreview : styles.notePlaceholder}
             >
               {existingNote || 'No note yet — tap "More options" to add one'}
             </Text>
-            {role === "viewer" &&
-              marks.logged.has(selectedDate) && (
-                <>
-                  <Text style={styles.noteLabel}>Cycle</Text>
-                  <Text style={styles.notePreview}>
-                    Period day · shared with you
-                  </Text>
-                </>
-              )}
-            {role === "viewer" &&
-              !marks.logged.has(selectedDate) &&
-              (marks.projected.has(selectedDate) ||
-                (marks.predicted.has(selectedDate) &&
-                  selectedDate >= TODAY)) && (
-                <>
-                  <Text style={styles.noteLabel}>Cycle</Text>
-                  <Text style={styles.notePreview}>Predicted period day</Text>
-                </>
-              )}
-            {role !== "hidden" &&
+            {(role === "viewer" || role === "owner") &&
               stats.daysUntil !== null &&
               stats.daysUntil < 0 &&
-              (selectedDate === TODAY ||
+              (selectedDate === today ||
                 selectedDate === stats.nextStart) && (
                 <Text style={styles.panelLabel}>
                   Expected {-stats.daysUntil} day
@@ -508,6 +578,12 @@ export default function CalendarScreen() {
 
             {modalMode === "options" && (
               <>
+                {cycleNote && (
+                  <>
+                    <Text style={styles.noteLabel}>Cycle</Text>
+                    <Text style={styles.notePreview}>{cycleNote}</Text>
+                  </>
+                )}
                 {isDateNight ? (
                   <View style={styles.statusCard}>
                     <Text style={styles.statusText}>Set as next date</Text>
@@ -675,6 +751,43 @@ const styles = StyleSheet.create({
     gap: 6,
     minHeight: 90,
   },
+  legend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    columnGap: 12,
+    rowGap: 6,
+    backgroundColor: "#fff5f7",
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  legendRow: { flexDirection: "row", alignItems: "center", gap: 5 },
+  legendPeriod: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: CYCLE_DOT.period,
+  },
+  legendPredicted: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: CYCLE_DOT.predicted,
+  },
+  legendFertile: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: CYCLE_DOT.fertile,
+  },
+  legendOvulation: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: CYCLE_DOT.ovulation,
+  },
+  legendText: { fontSize: 12, color: "#999" },
   panelHeader: {
     flexDirection: "row",
     justifyContent: "space-between",

@@ -4,8 +4,7 @@ import { type ReactNode } from "react";
 import { Pressable, PressableProps } from "react-native";
 import SidebarHost from "@/components/SidebarHost";
 import { SidebarProvider } from "@/context/SidebarContext";
-import { usePartnerProfile } from "@/hooks/usePartnerProfile";
-import { useProfile } from "@/context/ProfileContext";
+import { useCycleRole } from "@/hooks/useCycleRole";
 
 // Ripple-free tab button, defined once at module scope so it keeps a stable
 // identity across renders. The navigator injects
@@ -33,18 +32,10 @@ function NoRippleTabButton({
 }
 
 export default function TabLayout() {
-  const { profile } = useProfile();
-  const partner = usePartnerProfile();
-  const myGender = profile?.gender ?? null;
-  const theirGender = partner?.gender ?? null;
-  // Hide the tab only when both sides are known and neither is the owner.
-  // While genders are still syncing, the tab shows with an in-screen
-  // prompt instead of flickering in and out.
-  const hideCycle =
-    !!myGender &&
-    !!theirGender &&
-    myGender !== "woman" &&
-    theirGender !== "woman";
+  const role = useCycleRole();
+  // Owner-only tab: viewer, hidden and loading all hide it (href null
+  // removes the button; the route itself stays for deep links).
+  const hideCycle = role !== "owner";
 
   return (
     <SidebarProvider>

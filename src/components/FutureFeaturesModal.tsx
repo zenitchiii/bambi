@@ -40,10 +40,6 @@ const FEATURES = [
     title: "✨ Polish Pass",
     desc: "Smaller fixes and refinements across the app — better text fitting on different phone sizes, and general tidying up.",
   },
-  {
-    title: "🌸 Cycle Tracker",
-    desc: "A gentle way to track cycle, right alongside everything else in the app.",
-  },
 ];
 
 export default function FutureFeaturesModal({ visible, onClose }: Props) {
