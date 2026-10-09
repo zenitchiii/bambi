@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   onSnapshot,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -218,6 +219,36 @@ export function watchCouple(code: string, onUpdate: (data: any) => void) {
 }
 
 export { COUPLE_ID_KEY };
+
+// Pending rejoin profile stash: the chosen slot's synced profile, so the
+// Profile step can prefill name/birthday and lock gender. Removed on save.
+export const REJOIN_PREFILL_KEY = "rejoinPrefill";
+
+export type RejoinSlot = "memberA" | "memberB";
+
+// Returning user reclaims their old slot after reinstall/clear-data: exactly
+// one field changes to their new uid. The transaction re-reads and asserts
+// the slot still holds the expected old uid and the other slot is intact —
+// the race loser gets "claimed", never a silent steal.
+export async function rejoinSlot(
+  code: string,
+  slot: RejoinSlot,
+  expectedOldUid: string,
+  myUid: string,
+): Promise<"ok" | "claimed" | "missing"> {
+  if (expectedOldUid === myUid) return "ok"; // already mine (retry after success)
+  const ref = doc(db, "couples", code);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return "missing";
+    const data = snap.data();
+    const other = slot === "memberA" ? "memberB" : "memberA";
+    if (data[slot] !== expectedOldUid) return "claimed";
+    if (typeof data[other] !== "string" || !data[other]) return "claimed";
+    tx.update(ref, { [slot]: myUid });
+    return "ok";
+  });
+}
 
 export async function isMemberA(
   coupleId: string,

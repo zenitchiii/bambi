@@ -35,8 +35,18 @@ function RootNavigator() {
   return (
     <>
       <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="(tabs)" redirect={status !== "onboarded"} />
-        <Stack.Screen name="onboarding" redirect={status === "onboarded"} />
+        <Stack.Screen
+          name="pair"
+          redirect={status === "profile" || status === "tabs"}
+        />
+        <Stack.Screen
+          name="profile"
+          redirect={status === "pair" || status === "tabs"}
+        />
+        <Stack.Screen
+          name="(tabs)"
+          redirect={status === "pair" || status === "profile"}
+        />
       </Stack>
       {!ready && <SplashScreenView />}
     </>

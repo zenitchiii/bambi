@@ -1,6 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApp, getApps, initializeApp } from "firebase/app";
-import { getReactNativePersistence, initializeAuth } from "firebase/auth";
+import {
+  getAuth,
+  getReactNativePersistence,
+  initializeAuth,
+  type Auth,
+} from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -16,8 +21,19 @@ const firebaseConfig = {
 // can happen with React Native's fast-refresh during development
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-export const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(AsyncStorage),
-});
+// Module scope runs once per load, but fast refresh can re-execute it while
+// the first auth instance is still alive — fall back to it instead of
+// throwing "auth/already-initialized".
+let auth: Auth;
+try {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  });
+} catch (e) {
+  if ((e as { code?: unknown })?.code !== "auth/already-initialized") throw e;
+  auth = getAuth(app);
+}
+
+export { auth };
 
 export const db = getFirestore(app);

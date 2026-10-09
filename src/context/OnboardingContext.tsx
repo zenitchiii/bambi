@@ -1,5 +1,7 @@
 import { COUPLE_ID_KEY } from "@/lib/pairing";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { auth } from "@/lib/firebase";
+import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
 import {
   createContext,
   ReactNode,
@@ -9,11 +11,12 @@ import {
   useState,
 } from "react";
 
-type OnboardingStatus = "loading" | "onboarded" | "needs-onboarding";
+type OnboardingStatus = "loading" | "pair" | "profile" | "tabs";
 
 type OnboardingContextValue = {
   status: OnboardingStatus;
   coupleId: string | null;
+  uid: string | null;
   refreshStatus: () => Promise<void>;
 };
 
@@ -24,6 +27,31 @@ const OnboardingContext = createContext<OnboardingContextValue | undefined>(
 export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<OnboardingStatus>("loading");
   const [coupleId, setCoupleId] = useState<string | null>(null);
+  // Single auth resolution for the app: set once the persisted session
+  // restores (or a fresh anonymous sign-in completes). Screens stay on
+  // "loading" until then instead of acting on a null user.
+  const [uid, setUid] = useState<string | null>(null);
+
+  useEffect(() => {
+    let sawNull = false;
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // TEMP-LOG-AUTH: delete after the persistence test.
+        console.log(
+          "[auth] session",
+          sawNull ? "newly-created" : "restored",
+          user.uid,
+        );
+        setUid(user.uid);
+      } else {
+        sawNull = true;
+        signInAnonymously(auth).catch((e) =>
+          console.warn("[auth] sign-in failed", e),
+        );
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -32,22 +60,25 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
         AsyncStorage.getItem("userProfile"),
       ]);
       setCoupleId(storedCoupleId);
-      setStatus(storedCoupleId && profile ? "onboarded" : "needs-onboarding");
+      // Three gates, evaluated in order: no code -> Pair; code but no
+      // local profile -> Profile (resumes here after a mid-profile kill,
+      // since the code is saved at pair time); both -> tabs.
+      setStatus(!storedCoupleId ? "pair" : profile ? "tabs" : "profile");
     } catch (e) {
       // Without this the app stays on the splash screen forever when storage
       // throws — safest fallback is to send the user through onboarding.
       console.warn("[onboarding] failed to load status", e);
       setCoupleId(null);
-      setStatus("needs-onboarding");
+      setStatus("pair");
     }
   }, []);
 
   useEffect(() => {
-    refreshStatus();
-  }, [refreshStatus]);
+    if (uid) refreshStatus();
+  }, [uid, refreshStatus]);
 
   return (
-    <OnboardingContext.Provider value={{ status, coupleId, refreshStatus }}>
+    <OnboardingContext.Provider value={{ status, coupleId, uid, refreshStatus }}>
       {children}
     </OnboardingContext.Provider>
   );

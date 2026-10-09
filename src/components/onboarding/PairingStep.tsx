@@ -6,9 +6,13 @@ import {
   createCoupleCode,
   ensureSignedIn,
   joinCoupleCode,
+  REJOIN_PREFILL_KEY,
+  rejoinSlot,
   watchCouple,
+  type RejoinSlot,
 } from "@/lib/pairing";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { Gender } from "@/lib/profileSync";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -20,8 +24,18 @@ import {
   View,
 } from "react-native";
 
-type Mode = "choose" | "host" | "join";
+type Mode = "choose" | "host" | "join" | "rejoin";
 type Props = { onNext: () => void };
+
+// One side of an already-paired couple, for the rejoin picker.
+type SlotInfo = {
+  slot: RejoinSlot;
+  uid: string;
+  name: string;
+  birthday: string;
+  anniversary: string;
+  gender: Gender | null;
+};
 
 export default function PairingStep({ onNext }: Props) {
   const { refreshProfile } = useProfile();
@@ -31,11 +45,22 @@ export default function PairingStep({ onNext }: Props) {
   const [joinInput, setJoinInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rejoinInfo, setRejoinInfo] = useState<{
+    code: string;
+    slots: [SlotInfo, SlotInfo];
+  } | null>(null);
+  const [rejoinPick, setRejoinPick] = useState<RejoinSlot | null>(null);
   const unsubscribeRef = useRef<(() => void) | undefined>(undefined);
 
   // Stop listening for a partner if this screen goes away before they join
   useEffect(() => {
     return () => unsubscribeRef.current?.();
+  }, []);
+
+  // A stale prefill (backed out of a previous rejoin) must not leak into
+  // the next Profile step.
+  useEffect(() => {
+    AsyncStorage.removeItem(REJOIN_PREFILL_KEY).catch(() => {});
   }, []);
 
   function handleBack() {
@@ -106,11 +131,95 @@ export default function PairingStep({ onNext }: Props) {
     try {
       const uid = await ensureSignedIn();
       const success = await joinCoupleCode(joinInput.trim(), uid);
-      if (!success) {
-        setError("That code doesn't exist or is already taken.");
+      if (success) {
+        await AsyncStorage.setItem(COUPLE_ID_KEY, joinInput.trim());
+        onNext();
         return;
       }
-      await AsyncStorage.setItem(COUPLE_ID_KEY, joinInput.trim());
+      // Join failed — find out why: missing code, already a member
+      // (retry), or a full couple this uid doesn't belong to (rejoin?).
+      const snap = await getDoc(doc(db, "couples", joinInput.trim()));
+      if (!snap.exists()) {
+        setError("That code doesn't exist — check it and try again.");
+        return;
+      }
+      const data = snap.data();
+      if (data.memberA === uid || data.memberB === uid) {
+        await AsyncStorage.setItem(COUPLE_ID_KEY, joinInput.trim());
+        onNext();
+        return;
+      }
+      const toSlot = (slot: RejoinSlot): SlotInfo | null => {
+        const memberUid = data[slot];
+        const prof = slot === "memberA" ? data.profileA : data.profileB;
+        if (typeof memberUid !== "string" || !memberUid) return null;
+        return {
+          slot,
+          uid: memberUid,
+          name:
+            typeof prof?.name === "string" && prof.name.trim()
+              ? prof.name.trim()
+              : slot === "memberA"
+                ? "Partner 1"
+                : "Partner 2",
+          birthday: typeof prof?.birthday === "string" ? prof.birthday : "",
+          anniversary:
+            typeof prof?.anniversary === "string" ? prof.anniversary : "",
+          gender: prof?.gender === "woman" || prof?.gender === "man" ? prof.gender : null,
+        };
+      };
+      const a = toSlot("memberA");
+      const b = toSlot("memberB");
+      if (a && b) {
+        setRejoinInfo({ code: joinInput.trim(), slots: [a, b] });
+        setRejoinPick(null);
+        setMode("rejoin");
+        return;
+      }
+      setError("That code doesn't exist or is already taken.");
+    } catch {
+      setError("Something went wrong — check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRejoin() {
+    if (!rejoinInfo || !rejoinPick) return;
+    const picked = rejoinInfo.slots.find((s) => s.slot === rejoinPick);
+    if (!picked) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const uid = await ensureSignedIn();
+      const result = await rejoinSlot(
+        rejoinInfo.code,
+        picked.slot,
+        picked.uid,
+        uid,
+      );
+      if (result === "missing") {
+        setError("That code no longer exists.");
+        return;
+      }
+      if (result === "claimed") {
+        setError("Someone just claimed that spot — try again.");
+        return;
+      }
+      // Stash the slot's profile so the next step prefills name/birthday
+      // and locks gender; shared history loads from the existing doc.
+      await AsyncStorage.multiSet([
+        [COUPLE_ID_KEY, rejoinInfo.code],
+        [
+          REJOIN_PREFILL_KEY,
+          JSON.stringify({
+            name: picked.name,
+            birthday: picked.birthday,
+            anniversary: picked.anniversary,
+            gender: picked.gender,
+          }),
+        ],
+      ]);
       onNext();
     } catch {
       setError("Something went wrong — check your connection and try again.");
@@ -164,9 +273,56 @@ export default function PairingStep({ onNext }: Props) {
     );
   }
 
+  if (mode === "rejoin" && rejoinInfo) {
+    const picked = rejoinInfo.slots.find((s) => s.slot === rejoinPick) ?? null;
+    const other =
+      rejoinPick === null
+        ? null
+        : (rejoinInfo.slots.find((s) => s.slot !== rejoinPick)?.name ??
+          "your partner");
+    return (
+      <View style={styles.page}>
+        <Text style={styles.title}>That code is already paired</Text>
+        <Text style={styles.hint}>Which one is you?</Text>
+        {rejoinInfo.slots.map((s) => (
+          <Pressable
+            key={s.slot}
+            style={[
+              styles.button,
+              rejoinPick !== s.slot && styles.secondaryButton,
+            ]}
+            onPress={() => setRejoinPick(s.slot)}
+          >
+            <Text style={styles.buttonText}>{s.name}</Text>
+          </Pressable>
+        ))}
+        {picked && other && (
+          <Text style={styles.hint}>
+            Rejoining as {picked.name} — {other}&apos;s data stays untouched.
+          </Text>
+        )}
+        <Pressable
+          style={[styles.button, !picked && styles.secondaryButton]}
+          onPress={handleRejoin}
+          disabled={loading || !picked}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Rejoin</Text>
+          )}
+        </Pressable>
+        {error && <Text style={styles.error}>{error}</Text>}
+        <Pressable onPress={handleBack}>
+          <Text style={styles.backText}>Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.page}>
-      <Text style={styles.title}>Enter your partner's code</Text>
+      <Text style={styles.title}>Enter your partner&apos;s code</Text>
       <TextInput
         style={styles.input}
         value={joinInput}

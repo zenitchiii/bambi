@@ -80,6 +80,9 @@ export default function EditProfileModal({ visible, onClose }: Props) {
 
   async function handleSave() {
     if (!name.trim() || !birthday || !anniversary) return;
+    // Gender locks once set (roles depend on it); keep the saved one when
+    // the picker is hidden so an edit can never drop it.
+    const finalGender = gender ?? profile?.gender ?? null;
     setSaving(true);
 
     try {
@@ -90,7 +93,7 @@ export default function EditProfileModal({ visible, onClose }: Props) {
           photoUri,
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
-          ...(gender ? { gender } : {}),
+          ...(finalGender ? { gender: finalGender } : {}),
         }),
       );
       await refreshProfile();
@@ -101,7 +104,7 @@ export default function EditProfileModal({ visible, onClose }: Props) {
           name: name.trim(),
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
-          ...(gender ? { gender } : {}),
+          ...(finalGender ? { gender: finalGender } : {}),
         });
       }
       onClose();
@@ -158,14 +161,22 @@ export default function EditProfileModal({ visible, onClose }: Props) {
             </Text>
           </Pressable>
 
-          {/* One-time prompt for profiles saved before gender existed —
-              vanishes after the first save with a choice. Never blocks. */}
-          {profile && !profile.gender && (
-            <Text style={styles.genderPrompt}>
-              Choose an option to unlock the cycle tracker.
+          {/* Gender locks once set — roles and cycle visibility depend on
+              it, so it can't be changed here. New profiles still choose. */}
+          {profile?.gender ? (
+            <Text style={styles.lockedText}>
+              {profile.gender === "woman" ? "Woman" : "Man"} · locked
             </Text>
+          ) : (
+            <>
+              {profile && !profile.gender && (
+                <Text style={styles.genderPrompt}>
+                  Choose an option to unlock the cycle tracker.
+                </Text>
+              )}
+              <GenderPicker value={gender} onChange={setGender} />
+            </>
           )}
-          <GenderPicker value={gender} onChange={setGender} />
 
           {activePicker && (
             <DateTimePicker
@@ -261,6 +272,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 10,
   },
+  lockedText: { color: "#999", fontWeight: "600" },
   saveButton: {
     backgroundColor: "#e75480",
     borderRadius: 12,

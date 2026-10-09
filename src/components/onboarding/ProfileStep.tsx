@@ -1,12 +1,12 @@
 import { useOnboarding } from "@/context/OnboardingContext";
 import { useProfile } from "@/context/ProfileContext";
-import { COUPLE_ID_KEY, ensureSignedIn, isMemberA } from "@/lib/pairing";
+import { COUPLE_ID_KEY, ensureSignedIn, isMemberA, REJOIN_PREFILL_KEY } from "@/lib/pairing";
 import { syncProfile, type Gender } from "@/lib/profileSync";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -31,9 +31,48 @@ export default function ProfileStep(_: Props) {
   const [birthday, setBirthday] = useState<Date | null>(null);
   const [anniversary, setAnniversary] = useState<Date | null>(null);
   const [gender, setGender] = useState<Gender | null>(null);
+  // Rejoin: gender comes from the claimed slot and stays read-only (role
+  // and cycle visibility depend on it). Null = free choice as before.
+  const [lockedGender, setLockedGender] = useState<Gender | null>(null);
   const [activePicker, setActivePicker] = useState<PickerTarget>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // One-time prefill from a rejoin claim: name/birthday editable, gender
+  // locked. Runs unconditionally; no-ops without a stash.
+  useEffect(() => {
+    AsyncStorage.getItem(REJOIN_PREFILL_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        try {
+          const saved = JSON.parse(raw);
+          if (typeof saved?.name === "string" && saved.name.trim()) {
+            setName(saved.name.trim());
+          }
+          const birthdayDate =
+            typeof saved?.birthday === "string"
+              ? new Date(saved.birthday)
+              : null;
+          if (birthdayDate && !Number.isNaN(birthdayDate.getTime())) {
+            setBirthday(birthdayDate);
+          }
+          const anniversaryDate =
+            typeof saved?.anniversary === "string"
+              ? new Date(saved.anniversary)
+              : null;
+          if (anniversaryDate && !Number.isNaN(anniversaryDate.getTime())) {
+            setAnniversary(anniversaryDate);
+          }
+          if (saved?.gender === "woman" || saved?.gender === "man") {
+            setGender(saved.gender);
+            setLockedGender(saved.gender);
+          }
+        } catch {
+          // Corrupt stash: fall back to blank fields.
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   async function pickPhoto() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -72,6 +111,9 @@ export default function ProfileStep(_: Props) {
   }
 
   async function handleSave() {
+    // Locked gender (rejoin) wins over the picker; syncProfile writes only
+    // this device's own slot, never the partner's.
+    const finalGender = lockedGender ?? gender;
     if (!name.trim()) {
       setError("Enter a name so your partner knows it's you.");
       return;
@@ -80,7 +122,7 @@ export default function ProfileStep(_: Props) {
       setError("Pick both your birthday and your anniversary date.");
       return;
     }
-    if (!gender) {
+    if (!finalGender) {
       setError("Choose an option so cycle tracking knows who logs.");
       return;
     }
@@ -98,7 +140,7 @@ export default function ProfileStep(_: Props) {
           photoUri,
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
-          gender,
+          gender: finalGender,
         }),
       );
       if (coupleId) {
@@ -107,10 +149,12 @@ export default function ProfileStep(_: Props) {
           name: name.trim(),
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
-          gender,
+          gender: finalGender,
         });
       }
-      await refreshStatus(); // flips status to "onboarded" — root layout swaps to tabs automatically
+      // Prefill served its purpose — drop it so a later edit starts clean.
+      await AsyncStorage.removeItem(REJOIN_PREFILL_KEY).catch(() => {});
+      await refreshStatus(); // flips status to "tabs" — root layout swaps automatically
       await refreshProfile(); // loads the profile we just saved into context immediately
     } catch {
       setError("Couldn't save your profile — try again.");
@@ -160,7 +204,13 @@ export default function ProfileStep(_: Props) {
         </Text>
       </Pressable>
 
-      <GenderPicker value={gender} onChange={setGender} />
+      {lockedGender ? (
+        <Text style={styles.lockedText}>
+          {lockedGender === "woman" ? "Woman" : "Man"} · locked
+        </Text>
+      ) : (
+        <GenderPicker value={gender} onChange={setGender} />
+      )}
 
       {activePicker && (
         <DateTimePicker
@@ -240,4 +290,5 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: "#fff", fontWeight: "600", fontSize: 16 },
   error: { color: "#c0392b", textAlign: "center" },
+  lockedText: { color: "#999", fontWeight: "600" },
 });
