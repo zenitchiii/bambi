@@ -1,5 +1,4 @@
 import { useOnboarding } from "@/context/OnboardingContext";
-import { useProfile } from "@/context/ProfileContext";
 import { db } from "@/lib/firebase";
 import {
   COUPLE_ID_KEY,
@@ -13,7 +12,7 @@ import {
 } from "@/lib/pairing";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Gender } from "@/lib/profileSync";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -38,7 +37,6 @@ type SlotInfo = {
 };
 
 export default function PairingStep({ onNext }: Props) {
-  const { refreshProfile } = useProfile();
   const { refreshStatus } = useOnboarding();
   const [mode, setMode] = useState<Mode>("choose");
   const [code, setCode] = useState("");
@@ -68,36 +66,6 @@ export default function PairingStep({ onNext }: Props) {
     unsubscribeRef.current = undefined;
     setError(null);
     setMode("choose");
-  }
-
-  async function handleDevSkip() {
-    const uid = await ensureSignedIn();
-    const devCoupleId = `DEV-${uid.slice(0, 8)}`;
-    const coupleRef = doc(db, "couples", devCoupleId);
-    const snap = await getDoc(coupleRef);
-    if (!snap.exists()) {
-      // Step 1: create with memberB still empty — satisfies the rules'
-      // "create" branch, same as real pairing does
-      await setDoc(coupleRef, { memberA: uid, memberB: null });
-    }
-    // Step 2: join as your own memberB — satisfies the rules' separate
-    // "join" branch (memberB was null, now becomes your uid)
-    await setDoc(coupleRef, { memberB: uid }, { merge: true });
-    await AsyncStorage.multiSet([
-      [COUPLE_ID_KEY, "DEV000"],
-      [COUPLE_ID_KEY, devCoupleId],
-      [
-        "userProfile",
-        JSON.stringify({
-          name: "Dev Tester",
-          photoUri: null,
-          birthday: new Date(2000, 0, 1).toISOString(),
-          anniversary: new Date(2022, 11, 16).toISOString(),
-        }),
-      ],
-    ]);
-    await refreshStatus();
-    await refreshProfile();
   }
 
   async function handleHost() {
@@ -264,11 +232,6 @@ export default function PairingStep({ onNext }: Props) {
           <Text style={styles.buttonText}>Enter a code</Text>
         </Pressable>
         {error && <Text style={styles.error}>{error}</Text>}
-        {__DEV__ && (
-          <Pressable onPress={handleDevSkip}>
-            <Text style={styles.backText}>Skip onboarding (dev)</Text>
-          </Pressable>
-        )}
       </View>
     );
   }

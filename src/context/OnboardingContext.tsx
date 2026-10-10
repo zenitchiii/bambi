@@ -33,18 +33,10 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [uid, setUid] = useState<string | null>(null);
 
   useEffect(() => {
-    let sawNull = false;
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        // TEMP-LOG-AUTH: delete after the persistence test.
-        console.log(
-          "[auth] session",
-          sawNull ? "newly-created" : "restored",
-          user.uid,
-        );
         setUid(user.uid);
       } else {
-        sawNull = true;
         signInAnonymously(auth).catch((e) =>
           console.warn("[auth] sign-in failed", e),
         );

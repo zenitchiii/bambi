@@ -42,9 +42,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const MEMORIES_KEY = "memories";
 const UPCOMING_WINDOW_DAYS = 30;
-// DEV-ONLY: true previews Home as the man (viewer) sees it with one
-// account. Inert in production (__DEV__ is false in release builds).
-const DEBUG_FORCE_VIEWER = false;
 const [START_YEAR] = APP_START_DATE.split("-").map(Number);
 
 const HERO_HEIGHT = Dimensions.get("window").width;
@@ -181,17 +178,28 @@ export default function HomeScreen() {
     // Both partners see the countdown (edit rights are separate); hidden
     // and loading show nothing. Window: inside 30 days, or late/today.
     // "Your" for her own cycle, otherwise the partner's pronoun ("Her").
-    const viewRole = DEBUG_FORCE_VIEWER && __DEV__ ? "viewer" : cycleRole;
-    const days = cycleStats.daysUntil;
+    // NOTE: `days` below is the cycle countdown, NOT the Together counter.
     const who =
-      viewRole === "owner" ? "Your" : cap(getPossessive(partner?.gender));
+      cycleRole === "owner" ? "Your" : cap(getPossessive(partner?.gender));
+    const periodDays = cycleStats.daysUntil;
     const label =
-      canSeeCycle(viewRole) && days !== null && days <= 30
-        ? formatPeriodCountdown(days, who)
+      canSeeCycle(cycleRole) && periodDays !== null && periodDays <= 30
+        ? formatPeriodCountdown(periodDays, who)
         : null;
-    if (label === null || days === null) return upcoming;
-    return [...upcoming, { label: "Period", days, full: label, cycle: true }];
-  }, [profile, partner, dateNight, customEvents, cycleRole, cycleStats]);
+    if (label === null || periodDays === null) return upcoming;
+    return [
+      ...upcoming,
+      { label: "Period", days: periodDays, full: label, cycle: true },
+    ];
+  }, [
+    partner,
+    dateNight,
+    customEvents,
+    cycleRole,
+    cycleStats,
+    anniversaryDate,
+    yourBirthday,
+  ]);
 
   if (!profile) return null;
 
