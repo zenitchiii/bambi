@@ -63,7 +63,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       // Three gates, evaluated in order: no code -> Pair; code but no
       // local profile -> Profile (resumes here after a mid-profile kill,
       // since the code is saved at pair time); both -> tabs.
-      setStatus(!storedCoupleId ? "pair" : profile ? "tabs" : "profile");
+      const next = !storedCoupleId ? "pair" : profile ? "tabs" : "profile";
+      setStatus(next);
     } catch (e) {
       // Without this the app stays on the splash screen forever when storage
       // throws — safest fallback is to send the user through onboarding.

@@ -111,6 +111,7 @@ export default function PairingStep({ onNext }: Props) {
       unsubscribeRef.current = watchCouple(newCode, async (couple) => {
         if (couple.memberB) {
           await AsyncStorage.setItem(COUPLE_ID_KEY, newCode);
+          await refreshStatus();
           onNext();
         }
       });
@@ -137,6 +138,9 @@ export default function PairingStep({ onNext }: Props) {
       const result = await joinCoupleCode(joinInput.trim(), uid);
       if (result === "ok") {
         await AsyncStorage.setItem(COUPLE_ID_KEY, joinInput.trim());
+        // Status must advance before navigating: the profile route
+        // redirects back to Pair while status is still "pair".
+        await refreshStatus();
         onNext();
         return;
       }
@@ -158,6 +162,7 @@ export default function PairingStep({ onNext }: Props) {
       const data = snap.data();
       if (data.memberA === uid || data.memberB === uid) {
         await AsyncStorage.setItem(COUPLE_ID_KEY, joinInput.trim());
+        await refreshStatus();
         onNext();
         return;
       }
@@ -236,6 +241,7 @@ export default function PairingStep({ onNext }: Props) {
           }),
         ],
       ]);
+      await refreshStatus();
       onNext();
     } catch {
       setError("Something went wrong — check your connection and try again.");
