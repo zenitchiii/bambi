@@ -1,7 +1,7 @@
 import { useOnboarding } from "@/context/OnboardingContext";
 import { useProfile } from "@/context/ProfileContext";
-import { COUPLE_ID_KEY, ensureSignedIn, isMemberA, REJOIN_PREFILL_KEY } from "@/lib/pairing";
-import { syncProfile, type Gender } from "@/lib/profileSync";
+import { COUPLE_ID_KEY, ensureSignedIn, REJOIN_PREFILL_KEY } from "@/lib/pairing";
+import { writeOwnProfile, type Gender } from "@/lib/profileSync";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -111,8 +111,8 @@ export default function ProfileStep(_: Props) {
   }
 
   async function handleSave() {
-    // Locked gender (rejoin) wins over the picker; syncProfile writes only
-    // this device's own slot, never the partner's.
+    // Locked gender (rejoin) wins over the picker; the write goes to
+    // this device's own slot only, never the partner's.
     const finalGender = lockedGender ?? gender;
     if (!name.trim()) {
       setError("Enter a name so your partner knows it's you.");
@@ -130,7 +130,6 @@ export default function ProfileStep(_: Props) {
     setError(null);
     try {
       const coupleId = await AsyncStorage.getItem(COUPLE_ID_KEY);
-      const uid = await ensureSignedIn();
       let photoURL: string | null = null;
 
       await AsyncStorage.setItem(
@@ -144,8 +143,8 @@ export default function ProfileStep(_: Props) {
         }),
       );
       if (coupleId) {
-        const memberA = await isMemberA(coupleId, uid);
-        await syncProfile(coupleId, memberA, {
+        const uid = await ensureSignedIn();
+        await writeOwnProfile(coupleId, uid, {
           name: name.trim(),
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),

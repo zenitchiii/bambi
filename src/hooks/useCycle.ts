@@ -22,8 +22,7 @@ import { useToday } from "./useToday";
 // Single entry point for cycle data. Calendar and Home consume only this
 // hook — never cycle math or Firestore directly. The shared snapshot is
 // already normalized upstream, so periods/stats/marks derive straight from
-// state; writes go through the one versioned writer (which also migrates
-// legacy docs via deleteField on first write).
+// state; writes go through the one versioned writer.
 export function useCycle() {
   const { coupleId } = useOnboarding();
   const { data } = useSharedCoupleData();

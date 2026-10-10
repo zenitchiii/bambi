@@ -17,7 +17,6 @@ import MonthJumpPicker from "@/components/calendar/MonthJumpPicker";
 import {
   CALENDAR_THEME,
   CYCLE_DOT,
-  END_MONTH_INDEX,
   END_YEAR,
   FUTURE_RANGE_MONTHS,
   START_MONTH,
@@ -140,7 +139,12 @@ export default function CalendarScreen() {
   const calendarRef = useRef<any>(null);
   const { profile } = useProfile();
   const partner = usePartnerProfile();
-  const { data: shared, update: updateShared } = useSharedCoupleData();
+  const {
+    data: shared,
+    update: updateShared,
+    removeNote,
+    removeCustomEvent,
+  } = useSharedCoupleData();
   const { dateNight, notes, customEvents: events } = shared;
   const { role, periods, marks, stats, fertility } = useCycle();
 
@@ -290,9 +294,7 @@ export default function CalendarScreen() {
   };
   const handleRemoveNote = () => {
     if (!selectedDate) return;
-    const updated = { ...notes };
-    delete updated[selectedDate];
-    updateShared({ notes: updated });
+    removeNote(selectedDate);
     closeOptions();
   };
 
@@ -301,9 +303,7 @@ export default function CalendarScreen() {
     // A blank draft would otherwise persist as an empty-label event and
     // render as a nameless "— today" row on Home — treat it as a removal.
     if (eventDraft.trim() === "") {
-      const updated = { ...events };
-      delete updated[monthDay];
-      updateShared({ customEvents: updated });
+      removeCustomEvent(monthDay);
     } else {
       updateShared({
         customEvents: { ...events, [monthDay]: eventDraft.trim() },
@@ -313,9 +313,7 @@ export default function CalendarScreen() {
   };
   const handleRemoveEvent = () => {
     if (!monthDay) return;
-    const updated = { ...events };
-    delete updated[monthDay];
-    updateShared({ customEvents: updated });
+    removeCustomEvent(monthDay);
     closeOptions();
   };
 

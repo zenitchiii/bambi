@@ -113,40 +113,40 @@ export default function HomeScreen() {
     ? getMonthsAndDays(anniversaryDate)
     : { years: 0, months: 0, days: 0 };
 
-  const nextMonthsary = anniversaryDate
-    ? getNextOccurrence(
-        getMonthsaryOccurrences(anniversaryDate).filter(
-          (d) => d >= APP_START_DATE,
-        ),
-      )
-    : null;
-  const nextYourBirthday = yourBirthday
-    ? getNextOccurrence(
-        getYearlyOccurrences(yourBirthday).filter((d) => d >= APP_START_DATE),
-      )
-    : null;
-  const nextPartnerBirthday = partner
-    ? getNextOccurrence(
-        getYearlyOccurrences(formatDateISO(new Date(partner.birthday))).filter(
-          (d) => d >= APP_START_DATE,
-        ),
-      )
-    : null;
-  const customEventItems = Object.entries(customEvents)
-    .map(([monthDay, label]) => {
-      if (typeof label !== "string" || label.trim() === "") return null;
-      const next = getNextOccurrence(
-        getYearlyOccurrencesFromMonthDay(monthDay, START_YEAR, 5).filter(
-          (d) => d >= APP_START_DATE,
-        ),
-      );
-      return next ? { label: label.trim(), days: daysUntil(next) } : null;
-    })
-    .filter((item): item is { label: string; days: number } => !!item);
-
   // One memo for the whole list: role gates only the RESULT (never hooks),
   // so hidden/loading shows nothing and never flashes. No state/effects.
+  // Event inputs are derived inside so the dep array stays honest.
   const allUpcoming = useMemo(() => {
+    const nextMonthsary = anniversaryDate
+      ? getNextOccurrence(
+          getMonthsaryOccurrences(anniversaryDate).filter(
+            (d) => d >= APP_START_DATE,
+          ),
+        )
+      : null;
+    const nextYourBirthday = yourBirthday
+      ? getNextOccurrence(
+          getYearlyOccurrences(yourBirthday).filter((d) => d >= APP_START_DATE),
+        )
+      : null;
+    const nextPartnerBirthday = partner
+      ? getNextOccurrence(
+          getYearlyOccurrences(formatDateISO(new Date(partner.birthday))).filter(
+            (d) => d >= APP_START_DATE,
+          ),
+        )
+      : null;
+    const customEventItems = Object.entries(customEvents)
+      .map(([monthDay, label]) => {
+        if (typeof label !== "string" || label.trim() === "") return null;
+        const next = getNextOccurrence(
+          getYearlyOccurrencesFromMonthDay(monthDay, START_YEAR, 5).filter(
+            (d) => d >= APP_START_DATE,
+          ),
+        );
+        return next ? { label: label.trim(), days: daysUntil(next) } : null;
+      })
+      .filter((item): item is { label: string; days: number } => !!item);
     const upcoming = [
       dateNight && { label: "Next Date", days: daysUntil(dateNight) },
       nextMonthsary && {

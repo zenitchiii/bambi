@@ -114,8 +114,12 @@ export default function PairingStep({ onNext }: Props) {
           onNext();
         }
       });
-    } catch {
-      setError("Couldn't create a code — check your connection and try again.");
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Couldn't create a code — check your connection and try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -130,10 +134,18 @@ export default function PairingStep({ onNext }: Props) {
     setError(null);
     try {
       const uid = await ensureSignedIn();
-      const success = await joinCoupleCode(joinInput.trim(), uid);
-      if (success) {
+      const result = await joinCoupleCode(joinInput.trim(), uid);
+      if (result === "ok") {
         await AsyncStorage.setItem(COUPLE_ID_KEY, joinInput.trim());
         onNext();
+        return;
+      }
+      if (result === "missing") {
+        setError("Code not found — check it and try again.");
+        return;
+      }
+      if (result === "own-code") {
+        setError("This is your own code — give it to your partner.");
         return;
       }
       // Join failed — find out why: missing code, already a member
@@ -176,7 +188,7 @@ export default function PairingStep({ onNext }: Props) {
         setMode("rejoin");
         return;
       }
-      setError("That code doesn't exist or is already taken.");
+      setError("This code is already paired.");
     } catch {
       setError("Something went wrong — check your connection and try again.");
     } finally {
@@ -200,6 +212,10 @@ export default function PairingStep({ onNext }: Props) {
       );
       if (result === "missing") {
         setError("That code no longer exists.");
+        return;
+      }
+      if (result === "empty") {
+        setError("Your partner never joined that code — start a new code.");
         return;
       }
       if (result === "claimed") {

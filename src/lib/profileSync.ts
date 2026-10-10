@@ -1,5 +1,5 @@
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, updateDoc } from "firebase/firestore";
 
 export type Gender = "woman" | "man";
 
@@ -11,17 +11,17 @@ export type SyncedProfile = {
   gender?: Gender;
 };
 
-export async function syncProfile(
+// Writes ONLY the caller's own slot (picked by comparing uid to memberA),
+// as a field-level update — the partner's slot is never touched.
+export async function writeOwnProfile(
   coupleId: string,
-  isMemberA: boolean,
+  myUid: string,
   profile: SyncedProfile,
 ) {
-  const field = isMemberA ? "profileA" : "profileB";
-  await setDoc(
-    doc(db, "couples", coupleId),
-    { [field]: profile },
-    { merge: true },
-  );
+  const ref = doc(db, "couples", coupleId);
+  const snap = await getDoc(ref);
+  const slot = snap.exists() && snap.data().memberA === myUid ? "profileA" : "profileB";
+  await updateDoc(ref, { [slot]: profile });
 }
 
 export function watchPartnerProfile(

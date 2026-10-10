@@ -1,7 +1,6 @@
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged, signInAnonymously } from "firebase/auth";
 import {
-  deleteField,
   doc,
   getDoc,
   onSnapshot,
@@ -73,7 +72,9 @@ const DEFAULT_SHARED_DATA: SharedCoupleData = {
 
 export async function updateSharedData(
   coupleId: string,
-  updates: Partial<SharedCoupleData>,
+  updates: Partial<
+    Omit<SharedCoupleData, "memberA" | "memberB" | "profileA" | "profileB">
+  >,
 ) {
   await ensureSignedIn();
   await setDoc(doc(db, "couples", coupleId), updates, { merge: true });
@@ -128,10 +129,10 @@ export function normalizeCycle(raw: unknown, todayISO: string): CycleData {
   };
 }
 
-// Single writer for v3 cycle data. Replaces the whole cycle object and
-// deletes the legacy periodStarts field on first write (idempotent after
-// that); merge keeps every other top-level couple field untouched. Logs,
-// when present, are pruned to ~180 days on the way in.
+// Single writer for v3 cycle data. updateDoc REPLACES the whole cycle map
+// (setDoc-merge deep-merges nested maps, which resurrected cleared
+// overrides). The doc already exists at this point. Logs, when present,
+// are pruned to ~180 days on the way in.
 export async function writeCycle(
   coupleId: string,
   cycle: {
@@ -143,20 +144,15 @@ export async function writeCycle(
   },
 ) {
   await ensureSignedIn();
-  // `undefined` values are illegal in setDoc payloads, so the pruned logs
+  // `undefined` values are illegal in write payloads, so the pruned logs
   // key is spread conditionally rather than set to undefined.
   const { logs, ...rest } = cycle;
-  await setDoc(
-    doc(db, "couples", coupleId),
-    {
-      cycle: {
-        ...rest,
-        ...(logs ? { logs: pruneLogs(logs, formatDateISO(new Date())) } : {}),
-        periodStarts: deleteField(),
-      },
+  await updateDoc(doc(db, "couples", coupleId), {
+    cycle: {
+      ...rest,
+      ...(logs ? { logs: pruneLogs(logs, formatDateISO(new Date())) } : {}),
     },
-    { merge: true },
-  );
+  });
 }
 // Signs this device in anonymously if it isn't already, and resolves once
 // we have a stable Firebase UID to work with
@@ -180,30 +176,39 @@ function generateCode(): string {
 }
 
 // Creates a new couple document with this device as the first member,
-// and returns the code to share with your partner
+// retrying on the (rare) 6-digit collision. Throws a user-readable error
+// after several attempts.
 export async function createCoupleCode(myUid: string): Promise<string> {
-  const code = generateCode();
-  await setDoc(doc(db, "couples", code), {
-    createdAt: serverTimestamp(),
-    memberA: myUid,
-    memberB: null,
-  });
-  return code;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateCode();
+    const snap = await getDoc(doc(db, "couples", code));
+    if (!snap.exists()) {
+      await setDoc(doc(db, "couples", code), {
+        createdAt: serverTimestamp(),
+        memberA: myUid,
+        memberB: null,
+      });
+      return code;
+    }
+  }
+  throw new Error("Couldn't find a free code — try again.");
 }
 
-// Called on the second phone when entering a code — links this device as
-// memberB, as long as the code exists and isn't already taken
+// Called on the second phone when entering a code. Distinct outcomes so
+// the UI can say exactly what happened; "own-code" stays client-side
+// (the rules can't tell self-pairing from a legit claim).
 export async function joinCoupleCode(
   code: string,
   myUid: string,
-): Promise<boolean> {
+): Promise<"ok" | "missing" | "claimed" | "own-code"> {
   const ref = doc(db, "couples", code);
   const snap = await getDoc(ref);
-  if (!snap.exists()) return false;
+  if (!snap.exists()) return "missing";
   const data = snap.data();
-  if (data.memberB && data.memberB !== myUid) return false; // already paired to someone else
+  if (data.memberA === myUid) return "own-code";
+  if (data.memberB && data.memberB !== myUid) return "claimed";
   await updateDoc(ref, { memberB: myUid });
-  return true;
+  return "ok";
 }
 
 // Watches a couple doc in real time — used by the first phone to know the
@@ -235,7 +240,7 @@ export async function rejoinSlot(
   slot: RejoinSlot,
   expectedOldUid: string,
   myUid: string,
-): Promise<"ok" | "claimed" | "missing"> {
+): Promise<"ok" | "claimed" | "missing" | "empty"> {
   if (expectedOldUid === myUid) return "ok"; // already mine (retry after success)
   const ref = doc(db, "couples", code);
   return runTransaction(db, async (tx) => {
@@ -244,7 +249,8 @@ export async function rejoinSlot(
     const data = snap.data();
     const other = slot === "memberA" ? "memberB" : "memberA";
     if (data[slot] !== expectedOldUid) return "claimed";
-    if (typeof data[other] !== "string" || !data[other]) return "claimed";
+    // Partner never joined (or their slot was wiped): nothing to rejoin.
+    if (typeof data[other] !== "string" || !data[other]) return "empty";
     tx.update(ref, { [slot]: myUid });
     return "ok";
   });

@@ -1,4 +1,5 @@
 import { useOnboarding } from "@/context/OnboardingContext";
+import { db } from "@/lib/firebase";
 import {
   BucketListItem,
   SharedCoupleData,
@@ -7,6 +8,7 @@ import {
   watchSharedData,
 } from "@/lib/pairing";
 import { formatDateISO } from "@/utils/dateMath";
+import { deleteField, doc, updateDoc } from "firebase/firestore";
 import {
   createContext,
   ReactNode,
@@ -53,10 +55,16 @@ function normalize(data: SharedCoupleData): SharedCoupleData {
 
 type CoupleDataContextValue = {
   data: SharedCoupleData;
-  update: (updates: Partial<SharedCoupleData>) => void;
+  update: (
+    updates: Partial<
+      Omit<SharedCoupleData, "memberA" | "memberB" | "profileA" | "profileB">
+    >,
+  ) => void;
   addBucketItem: (title: string) => void;
   toggleBucketItem: (id: string) => void;
   deleteBucketItem: (id: string) => void;
+  removeNote: (dateISO: string) => void;
+  removeCustomEvent: (monthDay: string) => void;
 };
 
 const CoupleDataContext = createContext<CoupleDataContextValue | undefined>(
@@ -140,9 +148,60 @@ export function CoupleDataProvider({ children }: { children: ReactNode }) {
     [data.bucketList, persistList],
   );
 
+  // True server-side deletes: setDoc-merge deep-merges maps, so omitting a
+  // key locally never removes it remotely (it resurrects on restart).
+  // Dot-path + deleteField removes exactly one entry.
+  const removeNote = useCallback(
+    (dateISO: string) => {
+      setData((prev) => {
+        const notes = { ...prev.notes };
+        delete notes[dateISO];
+        return normalize({ ...prev, notes });
+      });
+      if (coupleId) {
+        updateDoc(doc(db, "couples", coupleId), {
+          [`notes.${dateISO}`]: deleteField(),
+        }).catch(console.warn);
+      }
+    },
+    [coupleId],
+  );
+
+  const removeCustomEvent = useCallback(
+    (monthDay: string) => {
+      setData((prev) => {
+        const customEvents = { ...prev.customEvents };
+        delete customEvents[monthDay];
+        return normalize({ ...prev, customEvents });
+      });
+      if (coupleId) {
+        updateDoc(doc(db, "couples", coupleId), {
+          [`customEvents.${monthDay}`]: deleteField(),
+        }).catch(console.warn);
+      }
+    },
+    [coupleId],
+  );
+
   const value = useMemo(
-    () => ({ data, update, addBucketItem, toggleBucketItem, deleteBucketItem }),
-    [data, update, addBucketItem, toggleBucketItem, deleteBucketItem],
+    () => ({
+      data,
+      update,
+      addBucketItem,
+      toggleBucketItem,
+      deleteBucketItem,
+      removeNote,
+      removeCustomEvent,
+    }),
+    [
+      data,
+      update,
+      addBucketItem,
+      toggleBucketItem,
+      deleteBucketItem,
+      removeNote,
+      removeCustomEvent,
+    ],
   );
 
   return (

@@ -1,7 +1,7 @@
 import { useOnboarding } from "@/context/OnboardingContext";
 import { useProfile } from "@/context/ProfileContext";
-import { ensureSignedIn, isMemberA } from "@/lib/pairing";
-import { syncProfile, type Gender } from "@/lib/profileSync";
+import { ensureSignedIn } from "@/lib/pairing";
+import { writeOwnProfile, type Gender } from "@/lib/profileSync";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -99,8 +99,7 @@ export default function EditProfileModal({ visible, onClose }: Props) {
       await refreshProfile();
       if (coupleId) {
         const uid = await ensureSignedIn();
-        const memberA = await isMemberA(coupleId, uid);
-        await syncProfile(coupleId, memberA, {
+        await writeOwnProfile(coupleId, uid, {
           name: name.trim(),
           birthday: birthday.toISOString(),
           anniversary: anniversary.toISOString(),
