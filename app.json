@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "bambi",
+    "name": "Bambi",
     "slug": "bambi",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./src/assets/images/bunny.png",
     "scheme": "bambi",
